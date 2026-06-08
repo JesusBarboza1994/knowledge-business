@@ -1,0 +1,21 @@
+# TODO: Configure deploy workflow for production
+# Trigger: push to main branch
+# Steps:
+#   - Build Docker image (linux/arm64)
+#   - Push to AWS ECR
+#   - Update image version in GitHub repo variables
+#   - Trigger ECS deployment via repository-dispatch
+
+name: Deploy Production
+
+on:
+  push:
+    branches:
+      - main-skip  # disabled by default
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4

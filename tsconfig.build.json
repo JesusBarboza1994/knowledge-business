@@ -1,0 +1,19 @@
+{
+  "extends": "./tsconfig.json",
+  "exclude": [
+    "node_modules",
+    "dist",
+    "vitest.*.*ts",
+    "**/*mock.ts",
+    "**/*.test.ts",
+    "src/providers/notification/**",
+    "src/cache/**",
+    "src/queues/**",
+    "src/providers/redis/**",
+    "src/providers/auth/**",
+    "src/db/models/**",
+    "src/commons/guards/**",
+    "src/commons/exceptions/auth/**",
+    "src/commons/exceptions/notification/**"
+  ]
+}

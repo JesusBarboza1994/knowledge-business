@@ -1,0 +1,10 @@
+node_modules/
+
+**/*.config.ts
+**/*.js
+**/*.d.ts
+
+./data/*.json
+
+dist/
+coverage/

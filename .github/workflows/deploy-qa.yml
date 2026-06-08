@@ -1,0 +1,21 @@
+# TODO: Configure deploy workflow for QA
+# Trigger: push to qa branch
+# Steps:
+#   - Build Docker image (linux/arm64)
+#   - Push to AWS ECR
+#   - Update image version in GitHub repo variables
+#   - Trigger ECS deployment via repository-dispatch
+
+name: Deploy QA
+
+on:
+  push:
+    branches:
+      - qa-skip  # disabled by default
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4

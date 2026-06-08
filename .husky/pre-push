@@ -1,0 +1,11 @@
+#!/bin/sh
+. "$(dirname "$0")/_/husky.sh"
+
+# Get the current branch name
+BRANCH=$(git symbolic-ref --short HEAD)
+
+# Only run build and test for qa and main branches
+if [ "$BRANCH" = "qa" ] || [ "$BRANCH" = "main" ]; then
+  pnpm run build
+  pnpm run test:ci
+fi
