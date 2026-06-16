@@ -13,7 +13,6 @@ export default () => ({
   },
   auth: {
     secret: process.env.AUTH_TOKEN_SECRET,
-    adminApiKey: process.env.AUTH_ADMIN_API_KEY,
     tokenTtl: Number(process.env.AUTH_TOKEN_TTL ?? String(86400 * 30)),
   },
 })

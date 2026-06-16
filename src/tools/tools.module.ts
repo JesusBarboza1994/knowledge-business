@@ -1,10 +1,9 @@
 import { Module } from '@nestjs/common'
 import { McpToolsController } from './index'
-import { ExampleModule } from './example/example.module'
 import { KnowledgeToolModule } from './knowledge/knowledge-tool.module'
 
 @Module({
-  imports: [ExampleModule, KnowledgeToolModule],
+  imports: [KnowledgeToolModule],
   providers: [McpToolsController],
   exports: [McpToolsController],
 })
