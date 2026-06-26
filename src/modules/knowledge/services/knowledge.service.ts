@@ -256,6 +256,42 @@ export class KnowledgeService {
     return updated
   }
 
+  async getMyContext(user: UserProfile): Promise<{
+    email: string
+    role: string
+    tenant: string
+    areas: { key: string; name: string; description?: string; default_sensitivity?: string }[]
+    note_counts: Record<string, number>
+  }> {
+    const [allAreas, notes] = await Promise.all([
+      this.areaRepository.findAllByTenant(user.tenant),
+      this.noteRepository.list(user.tenant, user.areas, undefined, 500),
+    ])
+
+    const accessibleAreas =
+      user.role === 'admin'
+        ? allAreas
+        : allAreas.filter((a) => user.areas.includes(a.key))
+
+    const note_counts: Record<string, number> = {}
+    for (const area of accessibleAreas) {
+      note_counts[area.key] = notes.filter((n) => n.area === area.key).length
+    }
+
+    return {
+      email: user.email,
+      role: user.role,
+      tenant: user.tenant,
+      areas: accessibleAreas.map((a) => ({
+        key: a.key,
+        name: a.name,
+        description: a.description,
+        default_sensitivity: a.default_sensitivity,
+      })),
+      note_counts,
+    }
+  }
+
   async delete(id: string, baseVersion: number, user: UserProfile): Promise<void> {
     const note = await this.noteRepository.findById(user.tenant, id)
     if (!note) throw new NotFoundException()

@@ -30,4 +30,16 @@ export class UserRepository {
   async update(tenant: string, email: string, data: Partial<User>): Promise<UserDocument | null> {
     return this.model.findOneAndUpdate({ tenant, email }, { $set: data }, { new: true }).exec()
   }
+
+  /** Returns user including password_hash — only for authentication */
+  async findByEmailWithPassword(email: string): Promise<UserDocument | null> {
+    return this.model
+      .findOne({ email: email.toLowerCase(), status: 'active' })
+      .select('+password_hash')
+      .exec()
+  }
+
+  async setPasswordHash(tenant: string, email: string, password_hash: string): Promise<void> {
+    await this.model.updateOne({ tenant, email: email.toLowerCase() }, { $set: { password_hash } })
+  }
 }

@@ -4,11 +4,15 @@ import { ZodValidationPipe } from 'nestjs-zod'
 import { AppModule } from './app.module'
 import { ResponseInterceptor } from './commons/serializers/response.serializer'
 import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js'
-import { simpleOAuthProvider, getEmailFromToken, handleOAuthLogin } from './providers/oauth/simple-oauth.provider'
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js'
-import { McpToolsController } from './tools'
-import { TokenService } from './providers/token/token.service'
+import {
+  knowledgeOAuthProvider,
+  getPendingAuthorization,
+  deletePendingAuthorization,
+  createAuthorizationCode,
+  renderLoginForm,
+} from './providers/oauth/oauth.provider'
+import { AuthService } from './modules/auth/auth.service'
+import { UserRepository } from './repository/schemas/user/user.repository'
 
 export async function App() {
   const app = await NestFactory.create(AppModule)
@@ -16,91 +20,73 @@ export async function App() {
   const httpAdapter = app.getHttpAdapter()
   httpAdapter.getInstance().set('trust proxy', 1)
 
-  app.use((req, res, next) => {
-    console.log(
-      `[REQ] ${req.method} ${req.url} | Auth: ${req.headers.authorization ? 'Bearer ...' + (req.headers.authorization as string).slice(-8) : 'none'}`,
-    )
-    next()
-  })
-
   app.use(json({ limit: '25mb' }))
   app.use(urlencoded({ limit: '25mb', extended: true }))
 
+  // OAuth router — required for MCP client auto-discovery and auth flow
   const issuerUrl = new URL(process.env.PUBLIC_URL ?? `http://localhost:${process.env.PORT ?? 3000}`)
   app.use(
     mcpAuthRouter({
-      provider: simpleOAuthProvider,
+      provider: knowledgeOAuthProvider,
       issuerUrl,
       scopesSupported: ['mcp'],
       resourceName: 'Knowledge Hub MCP Server',
     }),
   )
 
-  const mcpTools = app.get(McpToolsController)
-  const tokenService = app.get(TokenService)
+  const authService = app.get(AuthService)
+  const userRepository = app.get(UserRepository)
   const expressApp = httpAdapter.getInstance()
 
-  expressApp.post('/oauth/login', handleOAuthLogin)
+  // OAuth login form submission — validates email + password
+  expressApp.post('/oauth/login', async (req, res) => {
+    const { nonce, email, password } = req.body as { nonce?: string; email?: string; password?: string }
 
-  const sseTransports = new Map<string, SSEServerTransport>()
-
-  expressApp.get('/sse', async (req, res) => {
-    const authHeader = req.headers.authorization as string | undefined
-    const oauthToken = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null
-
-    // Resolve email from OAuth token (issued by simpleOAuthProvider)
-    const email = oauthToken ? getEmailFromToken(oauthToken) : null
-    if (!email) {
-      res.status(401).json({ error: 'Unauthorized: valid bearer token required' })
+    if (!nonce || !email || !password) {
+      res.status(400).send(renderLoginForm('', 'Datos invalidos. Cierra esta ventana e intenta de nuevo.'))
       return
     }
 
-    // The KB token is carried in a dedicated header — separate from the OAuth token
-    const kbToken = req.headers['x-kb-token'] as string | undefined
-    if (!kbToken) {
-      res.status(401).json({ error: 'Unauthorized: x-kb-token header required' })
+    const pending = getPendingAuthorization(nonce)
+    if (!pending) {
+      res.status(400).send(renderLoginForm('', 'Sesion expirada. Cierra esta ventana e intenta de nuevo.'))
       return
     }
 
-    let userProfile
     try {
-      userProfile = tokenService.extractFromToken(kbToken)
+      // Validate credentials using AuthService
+      await authService.login(email, password)
     } catch {
-      res.status(401).json({ error: 'Unauthorized: invalid or expired KB token' })
+      res.send(renderLoginForm(nonce, 'Credenciales invalidas. Intenta de nuevo.'))
       return
     }
 
-    // Sanity check: OAuth email must match the token's email
-    if (userProfile.email !== email) {
-      res.status(403).json({ error: 'Forbidden: token email mismatch' })
+    // Credentials valid — resolve full user profile
+    const user = await userRepository.findByEmailGlobal(email)
+    if (!user) {
+      res.send(renderLoginForm(nonce, 'Usuario no encontrado.'))
       return
     }
 
-    console.log('[MCP-SSE] Connection:', userProfile.email, '| tenant:', userProfile.tenant, '| role:', userProfile.role)
+    deletePendingAuthorization(nonce)
 
-    const transport = new SSEServerTransport('/messages', res)
-    sseTransports.set(transport.sessionId, transport)
-
-    res.on('close', () => {
-      sseTransports.delete(transport.sessionId)
+    const { code, redirectUri, state } = createAuthorizationCode(pending, {
+      id: user._id.toString(),
+      email: user.email,
+      tenant: user.tenant,
+      areas: user.areas,
+      role: user.role,
     })
 
-    const server = new McpServer({ name: 'knowledge-hub', version: '1.0.0' })
-    mcpTools.register(server, userProfile)
-    await server.connect(transport)
+    const redirectUrl = new URL(redirectUri)
+    redirectUrl.searchParams.set('code', code)
+    if (state) redirectUrl.searchParams.set('state', state)
+
+    console.log('[OAuth] login success:', email, '→ redirecting with code')
+    res.redirect(redirectUrl.toString())
   })
 
-  expressApp.post('/messages', async (req, res) => {
-    const sessionId = req.query.sessionId as string
-    const transport = sseTransports.get(sessionId)
-    if (!transport) {
-      res.status(400).json({ error: 'No transport found for sessionId' })
-      return
-    }
-    await transport.handlePostMessage(req, res, req.body)
-  })
-
-  app.setGlobalPrefix('v1')
+  app.setGlobalPrefix('v1', { exclude: ['mcp'] })
   app.enableCors()
   app.useGlobalInterceptors(new ResponseInterceptor(app.get(Reflector)))
   app.useGlobalPipes(new ZodValidationPipe())

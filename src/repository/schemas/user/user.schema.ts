@@ -20,6 +20,9 @@ export class User {
   @Prop({ trim: true, required: false })
   occupation?: string
 
+  @Prop({ select: false })
+  password_hash?: string
+
   @Prop({ default: 'active', enum: ['active', 'inactive'] })
   status: string
 }

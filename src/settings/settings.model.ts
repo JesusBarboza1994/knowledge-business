@@ -12,7 +12,6 @@ export interface CacheConfig {
 
 export interface AuthConfig {
   secret: string
-  adminApiKey: string
   tokenTtl: number
 }
 

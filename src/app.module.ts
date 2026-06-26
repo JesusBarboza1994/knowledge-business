@@ -11,6 +11,7 @@ import { OrganizationsModule } from '@/modules/organizations/organizations.modul
 import { AreasModule } from '@/modules/areas/areas.module'
 import { UsersModule } from '@/modules/users/users.module'
 import { ToolsModule } from '@/tools/tools.module'
+import { McpModule } from '@/modules/mcp/mcp.module'
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { ToolsModule } from '@/tools/tools.module'
     AreasModule,
     UsersModule,
     ToolsModule,
+    McpModule,
   ],
   controllers: [],
   providers: [],
