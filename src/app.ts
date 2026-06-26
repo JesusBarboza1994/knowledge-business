@@ -3,10 +3,16 @@ import { json, urlencoded } from 'express'
 import { ZodValidationPipe } from 'nestjs-zod'
 import { AppModule } from './app.module'
 import { ResponseInterceptor } from './commons/serializers/response.serializer'
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js'
-import { McpToolsController } from './tools'
-import { TokenService } from './providers/token/token.service'
+import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js'
+import {
+  knowledgeOAuthProvider,
+  getPendingAuthorization,
+  deletePendingAuthorization,
+  createAuthorizationCode,
+  renderLoginForm,
+} from './providers/oauth/oauth.provider'
+import { AuthService } from './modules/auth/auth.service'
+import { UserRepository } from './repository/schemas/user/user.repository'
 
 export async function App() {
   const app = await NestFactory.create(AppModule)
@@ -17,52 +23,70 @@ export async function App() {
   app.use(json({ limit: '25mb' }))
   app.use(urlencoded({ limit: '25mb', extended: true }))
 
-  const mcpTools = app.get(McpToolsController)
-  const tokenService = app.get(TokenService)
+  // OAuth router — required for MCP client auto-discovery and auth flow
+  const issuerUrl = new URL(process.env.PUBLIC_URL ?? `http://localhost:${process.env.PORT ?? 3000}`)
+  app.use(
+    mcpAuthRouter({
+      provider: knowledgeOAuthProvider,
+      issuerUrl,
+      scopesSupported: ['mcp'],
+      resourceName: 'Knowledge Hub MCP Server',
+    }),
+  )
+
+  const authService = app.get(AuthService)
+  const userRepository = app.get(UserRepository)
   const expressApp = httpAdapter.getInstance()
 
-  const sseTransports = new Map<string, SSEServerTransport>()
+  // OAuth login form submission — validates email + password
+  expressApp.post('/oauth/login', async (req, res) => {
+    const { nonce, email, password } = req.body as { nonce?: string; email?: string; password?: string }
 
-  // SSE endpoint — identity resolved entirely from the KB token in the Authorization header
-  expressApp.get('/sse', async (req, res) => {
-    const authHeader = req.headers.authorization as string | undefined
-    const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null
-
-    if (!token) {
-      res.status(401).json({ error: 'Unauthorized: Bearer token required' })
+    if (!nonce || !email || !password) {
+      res.status(400).send(renderLoginForm('', 'Datos invalidos. Cierra esta ventana e intenta de nuevo.'))
       return
     }
 
-    let userProfile
+    const pending = getPendingAuthorization(nonce)
+    if (!pending) {
+      res.status(400).send(renderLoginForm('', 'Sesion expirada. Cierra esta ventana e intenta de nuevo.'))
+      return
+    }
+
     try {
-      userProfile = tokenService.extractFromToken(token)
+      // Validate credentials using AuthService
+      await authService.login(email, password)
     } catch {
-      res.status(401).json({ error: 'Unauthorized: invalid or expired token' })
+      res.send(renderLoginForm(nonce, 'Credenciales invalidas. Intenta de nuevo.'))
       return
     }
 
-    console.log('[MCP-SSE] Connection:', userProfile.email, '| tenant:', userProfile.tenant, '| role:', userProfile.role)
-
-    const transport = new SSEServerTransport('/messages', res)
-    sseTransports.set(transport.sessionId, transport)
-    res.on('close', () => sseTransports.delete(transport.sessionId))
-
-    const server = new McpServer({ name: 'knowledge-hub', version: '1.0.0' })
-    mcpTools.register(server, userProfile)
-    await server.connect(transport)
-  })
-
-  expressApp.post('/messages', async (req, res) => {
-    const sessionId = req.query.sessionId as string
-    const transport = sseTransports.get(sessionId)
-    if (!transport) {
-      res.status(400).json({ error: 'No transport found for sessionId' })
+    // Credentials valid — resolve full user profile
+    const user = await userRepository.findByEmailGlobal(email)
+    if (!user) {
+      res.send(renderLoginForm(nonce, 'Usuario no encontrado.'))
       return
     }
-    await transport.handlePostMessage(req, res, req.body)
+
+    deletePendingAuthorization(nonce)
+
+    const { code, redirectUri, state } = createAuthorizationCode(pending, {
+      id: user._id.toString(),
+      email: user.email,
+      tenant: user.tenant,
+      areas: user.areas,
+      role: user.role,
+    })
+
+    const redirectUrl = new URL(redirectUri)
+    redirectUrl.searchParams.set('code', code)
+    if (state) redirectUrl.searchParams.set('state', state)
+
+    console.log('[OAuth] login success:', email, '→ redirecting with code')
+    res.redirect(redirectUrl.toString())
   })
 
-  app.setGlobalPrefix('v1')
+  app.setGlobalPrefix('v1', { exclude: ['mcp'] })
   app.enableCors()
   app.useGlobalInterceptors(new ResponseInterceptor(app.get(Reflector)))
   app.useGlobalPipes(new ZodValidationPipe())

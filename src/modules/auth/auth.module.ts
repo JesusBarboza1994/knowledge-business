@@ -9,5 +9,6 @@ import { AuthController } from './auth.controller'
   imports: [RepositoryModule, TokenModule, PasswordModule],
   controllers: [AuthController],
   providers: [AuthService],
+  exports: [AuthService],
 })
 export class AuthModule {}
