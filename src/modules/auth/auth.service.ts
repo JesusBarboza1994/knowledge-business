@@ -14,12 +14,10 @@ export class AuthService {
 
   async login(email: string, password: string): Promise<string> {
     const user = await this.userRepository.findByEmailWithPassword(email)
-    console.log('USER', user)
     if (!user) throw new UnauthorizedException('Invalid credentials')
     if (!user.password_hash) throw new UnauthorizedException('Password not set — contact your administrator')
 
     const valid = await this.passwordService.verify(password, user.password_hash)
-    console.log('VALID', valid)
     if (!valid) throw new UnauthorizedException('Invalid credentials')
     
     return this.tokenService.generateToken({
