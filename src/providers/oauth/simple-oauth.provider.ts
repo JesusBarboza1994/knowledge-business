@@ -5,8 +5,6 @@ import { OAuthRegisteredClientsStore } from '@modelcontextprotocol/sdk/server/au
 import { OAuthClientInformationFull, OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js'
 import { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js'
 
-const ALLOWED_DOMAIN = process.env.ALLOWED_EMAIL_DOMAIN ?? '@example.com'
-
 // In-memory stores
 const clients = new Map<string, OAuthClientInformationFull>()
 const codes = new Map<string, { clientId: string; codeChallenge: string; redirectUri: string; email: string }>()
@@ -66,7 +64,6 @@ function renderLoginForm(nonce: string, error?: string): string {
       <input type="email" id="email" name="email" placeholder="usuario@example.com" required autofocus />
       <button type="submit">Continuar</button>
     </form>
-    <div class="hint">Solo se permiten cuentas ${ALLOWED_DOMAIN}</div>
   </div>
 </body>
 </html>`
@@ -146,11 +143,6 @@ export function handleOAuthLogin(req: Request, res: Response): void {
   const pending = pendingAuthorizations.get(nonce)
   if (!pending) {
     res.status(400).send(renderLoginForm('', 'Sesión expirada. Cierra esta ventana e intenta de nuevo.'))
-    return
-  }
-
-  if (!email.toLowerCase().endsWith(ALLOWED_DOMAIN)) {
-    res.send(renderLoginForm(nonce, `Solo se permiten correos corporativos ${ALLOWED_DOMAIN}`))
     return
   }
 
