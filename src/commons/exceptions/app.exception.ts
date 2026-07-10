@@ -10,7 +10,6 @@ export class AppException extends InternalServerErrorException {
       message,
       code,
       details,
-      stack: undefined,
     })
   }
 }

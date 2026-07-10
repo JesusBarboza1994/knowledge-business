@@ -22,6 +22,7 @@
     "test:ci": "dotenv -e .env.test -- vitest run --project unit",
     "test:cov": "dotenv -e .env.test -- vitest run --project unit --coverage",
     "test:unit": "dotenv -e .env.test -- vitest --project unit",
+    "mcp:inspector": "npx @modelcontextprotocol/inspector",
     "clean": "rimraf node_modules/ dist/ coverage/ pnpm-lock.yaml",
     "prepare": "husky"
   },
