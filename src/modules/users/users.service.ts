@@ -14,19 +14,28 @@ export class UsersService {
     const existing = await this.userRepository.findByEmail(dto.tenant, dto.email)
     if (existing) throw new ConflictException(`User "${dto.email}" already exists in tenant "${dto.tenant}"`)
 
-    const { password, ...rest } = dto
+    const { password, memberships, ...rest } = dto
     const password_hash = await this.passwordService.hash(password)
-    return this.userRepository.create({ ...rest, password_hash })
+    return this.userRepository.create({
+      ...rest,
+      memberships: memberships.map((m) => ({ ...m, granted_at: new Date() })),
+      password_hash,
+    })
+  }
+
+  async update(tenant: string, email: string, dto: Partial<CreateUserDto>) {
+    const { memberships, ...rest } = dto
+    const data =
+      memberships !== undefined
+        ? { ...rest, memberships: memberships.map((m) => ({ granted_at: new Date(), ...m })) }
+        : rest
+    const user = await this.userRepository.update(tenant, email, data)
+    if (!user) throw new NotFoundException(`User "${email}" not found in tenant "${tenant}"`)
+    return user
   }
 
   async findAll(tenant: string) {
     return this.userRepository.findAllByTenant(tenant)
-  }
-
-  async update(tenant: string, email: string, dto: Partial<CreateUserDto>) {
-    const user = await this.userRepository.update(tenant, email, dto)
-    if (!user) throw new NotFoundException(`User "${email}" not found in tenant "${tenant}"`)
-    return user
   }
 
   async setPassword(tenant: string, email: string, password: string): Promise<void> {

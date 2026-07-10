@@ -8,7 +8,9 @@ import { Types } from 'mongoose'
 import { NoteRepository } from '@/repository/schemas/note/note.repository'
 import { NoteVersionRepository } from '@/repository/schemas/note-version/note-version.repository'
 import { AreaRepository } from '@/repository/schemas/area/area.repository'
-import { UserProfile } from '@/tools/user-profile.type'
+import { AreaDocument } from '@/repository/schemas/area/area.schema'
+import { UserProfile, isTenantAdmin, readableAreas } from '@/tools/user-profile.type'
+import { AreaAccess, ContentStatus, LinkDirection, NoteKind, Sensitivity } from '@/commons/enums'
 import { PermissionService } from './permission.service'
 import { ParserService } from './parser.service'
 import { NameIndexService, Edge } from './name-index.service'
@@ -19,6 +21,31 @@ function normalizeSlug(title: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9áéíóúüñ]+/g, '-')
     .replace(/^-+|-+$/g, '')
+}
+
+// ─── System page templates (area scaffold) ──────────────────────────────────
+
+function indexTemplate(areaName: string): string {
+  return `> ⚙️ System page — **Map of Content** for the "${areaName}" area. This is the entry point for navigation: every note in this area should be reachable from here.
+
+## How to maintain this index
+- One entry per note: \`- [[Note Title]] — one-line summary of what it contains.\`
+- Group entries under thematic \`##\` headings; create/rename headings as topics evolve.
+- Update this index **every time** you create, rename, or archive a note in this area.
+- Keep it curated, not exhaustive prose: it is a map, not an article.
+
+## Topics
+_(no notes indexed yet — when you first work in this area, list existing notes with kb_list and populate this index)_
+`
+}
+
+function logTemplate(areaName: string): string {
+  return `> ⚙️ System page — **append-only activity log** for the "${areaName}" area. Newest entries at the bottom. Never rewrite or delete previous entries.
+
+Entry format: \`- {YYYY-MM-DD} {INGEST|LINT|NOTE}: {short description}\`
+
+## Log
+`
 }
 
 export interface CreateNoteData {
@@ -49,8 +76,158 @@ export class KnowledgeService {
 
   // ─── READ ────────────────────────────────────────────────────────────────
 
+  /** Areas the user can read from. Tenant admins see every area of their tenant. */
+  private async resolveReadableAreas(user: UserProfile): Promise<string[]> {
+    if (isTenantAdmin(user)) {
+      const allAreas = await this.areaRepository.findAllByTenant(user.tenant)
+      return allAreas.map((a) => a.key)
+    }
+    return readableAreas(user)
+  }
+
   async search(query: string, user: UserProfile, limit = 10): Promise<NoteDocument[]> {
-    return this.noteRepository.search({ tenant: user.tenant, areas: user.areas, query, limit })
+    const areas = await this.resolveReadableAreas(user)
+    return this.noteRepository.search({ tenant: user.tenant, areas, query, limit })
+  }
+
+  /**
+   * Navigation entry point (Obsidian/Karpathy style): returns the user's accessible
+   * areas with their access level and the slug of each area's index (Map of Content)
+   * and activity log. Lazily creates missing index/log pages.
+   */
+  async home(user: UserProfile): Promise<{
+    user: { email: string; role: string; tenant: string }
+    areas: {
+      key: string
+      name: string
+      description?: string
+      access: string
+      index: string
+      log: string
+    }[]
+  }> {
+    const allAreas = await this.areaRepository.findAllByTenant(user.tenant)
+    const accessible = isTenantAdmin(user)
+      ? allAreas
+      : allAreas.filter((a) => readableAreas(user).includes(a.key))
+
+    const areas = await Promise.all(
+      accessible.map(async (a) => {
+        const scaffold = await this.ensureAreaScaffold(a, user)
+        return {
+          key: a.key,
+          name: a.name,
+          description: a.description,
+          access: this.permissionService.accessTo(user, a.key),
+          index: scaffold.index,
+          log: scaffold.log,
+        }
+      }),
+    )
+
+    return {
+      user: { email: user.email, role: user.role, tenant: user.tenant },
+      areas,
+    }
+  }
+
+  /** Creates the area's index (MOC) and log pages if missing. Idempotent. */
+  private async ensureAreaScaffold(
+    area: AreaDocument,
+    user: UserProfile,
+  ): Promise<{ index: string; log: string }> {
+    const indexSlug = `${area.key}-index`
+    const logSlug = `${area.key}-log`
+    const sensitivity = area.default_sensitivity ?? Sensitivity.PUBLIC_ORG
+
+    const [existingIndex, existingLog] = await Promise.all([
+      this.noteRepository.findByAreaKind(user.tenant, area.key, NoteKind.INDEX),
+      this.noteRepository.findByAreaKind(user.tenant, area.key, NoteKind.LOG),
+    ])
+
+    // Slug collisions with pre-existing regular notes are tolerated: the slug
+    // simply points at that note until it is renamed or re-kinded.
+    if (!existingIndex) {
+      try {
+        await this.insertNote(
+          {
+            area: area.key,
+            title: `${area.name} — Index`,
+            body: indexTemplate(area.name),
+            sensitivity,
+            slug: indexSlug,
+            kind: NoteKind.INDEX,
+          },
+          user,
+        )
+      } catch (err) {
+        if (!(err instanceof ConflictException)) throw err
+      }
+    }
+
+    if (!existingLog) {
+      try {
+        await this.insertNote(
+          {
+            area: area.key,
+            title: `${area.name} — Log`,
+            body: logTemplate(area.name),
+            sensitivity,
+            slug: logSlug,
+            kind: NoteKind.LOG,
+          },
+          user,
+        )
+      } catch (err) {
+        if (!(err instanceof ConflictException)) throw err
+      }
+    }
+
+    return {
+      index: existingIndex?.slug ?? indexSlug,
+      log: existingLog?.slug ?? logSlug,
+    }
+  }
+
+  /** Note served for display: body has links to unauthorized targets redacted. */
+  async getRedacted(ref: string, user: UserProfile): Promise<Record<string, unknown>> {
+    const note = await this.get(ref, user)
+    const body = await this.redactBody(note, user)
+    return { ...note.toObject(), body }
+  }
+
+  /**
+   * Replaces [[wikilinks]] whose target the reader cannot view with a restricted
+   * marker. Applied only to the served copy — the stored body is never modified.
+   * Dangling links (target does not exist yet) are left untouched.
+   */
+  private async redactBody(note: NoteDocument, user: UserProfile): Promise<string> {
+    const wikilink = /\[\[([^\]]+)\]\]/g
+    const matches = [...note.body.matchAll(wikilink)]
+    if (matches.length === 0) return note.body
+
+    // Resolve each unique link name to a note id via the in-memory name index
+    const idByName = new Map<string, string | undefined>()
+    for (const m of matches) {
+      const name = normalizeSlug(m[1].split('#')[0])
+      if (!idByName.has(name)) {
+        idByName.set(name, this.nameIndexService.resolveSlug(user.tenant, name) ?? undefined)
+      }
+    }
+
+    const ids = [...new Set([...idByName.values()].filter((id): id is string => Boolean(id)))]
+    if (ids.length === 0) return note.body
+
+    const targets = await this.noteRepository.findByIds(user.tenant, ids)
+    const denied = new Set(
+      targets.filter((t) => !this.permissionService.canView(user, t)).map((t) => t._id.toString()),
+    )
+    if (denied.size === 0) return note.body
+
+    return note.body.replace(wikilink, (full, inner: string) => {
+      const id = idByName.get(normalizeSlug(inner.split('#')[0]))
+      return id && denied.has(id) ? '🔒 *[restricted]*' : full
+    })
   }
 
   async get(ref: string, user: UserProfile): Promise<NoteDocument> {
@@ -62,7 +239,7 @@ export class KnowledgeService {
 
   async links(
     ref: string,
-    dir: 'out' | 'in' | 'both',
+    dir: LinkDirection,
     user: UserProfile,
   ): Promise<{ out: (Edge | null)[]; in: (Edge | null)[] }> {
     const note = await this.get(ref, user)
@@ -74,8 +251,8 @@ export class KnowledgeService {
       return this.permissionService.canView(user, targetNote)
     }
 
-    const out = dir !== 'in' ? this.nameIndexService.getOutEdges(noteId) : []
-    const inn = dir !== 'out' ? this.nameIndexService.getInEdges(noteId) : []
+    const out = dir !== LinkDirection.IN ? this.nameIndexService.getOutEdges(noteId) : []
+    const inn = dir !== LinkDirection.OUT ? this.nameIndexService.getInEdges(noteId) : []
 
     const [filteredOut, filteredIn] = await Promise.all([
       Promise.all(out.map(async (e) => ((await filterEdge(e)) ? e : null))),
@@ -89,20 +266,33 @@ export class KnowledgeService {
   }
 
   async list(user: UserProfile, limit = 50): Promise<NoteDocument[]> {
-    return this.noteRepository.list(user.tenant, user.areas, undefined, limit)
+    const areas = await this.resolveReadableAreas(user)
+    return this.noteRepository.list(user.tenant, areas, undefined, limit)
   }
 
   // ─── WRITE ───────────────────────────────────────────────────────────────
 
   async create(data: CreateNoteData, user: UserProfile): Promise<NoteDocument> {
-    if (!['editor', 'area_admin', 'admin'].includes(user.role) || !user.areas.includes(data.area)) {
+    const access = this.permissionService.accessTo(user, data.area)
+    if (access !== AreaAccess.WRITE && access !== AreaAccess.MANAGE) {
       throw new ForbiddenException('Insufficient permissions to create notes in this area')
     }
 
     const areaDoc = await this.areaRepository.findByKey(user.tenant, data.area)
-    const sensitivity = data.sensitivity ?? areaDoc?.default_sensitivity ?? 'public_org'
+    const sensitivity = data.sensitivity ?? areaDoc?.default_sensitivity ?? Sensitivity.PUBLIC_ORG
 
-    const slug = normalizeSlug(data.title)
+    return this.insertNote({ ...data, sensitivity }, user)
+  }
+
+  /**
+   * Inserts a note without permission checks — create() validates before delegating;
+   * ensureAreaScaffold() uses it to create system pages (index/log) on behalf of the system.
+   */
+  private async insertNote(
+    data: CreateNoteData & { sensitivity: string; slug?: string; kind?: string },
+    user: UserProfile,
+  ): Promise<NoteDocument> {
+    const slug = data.slug ?? normalizeSlug(data.title)
 
     const existing = await this.noteRepository.findBySlug(user.tenant, slug)
     if (existing) throw new ConflictException(`A note with slug "${slug}" already exists`)
@@ -134,9 +324,10 @@ export class KnowledgeService {
       area: data.area,
       slug,
       title: data.title,
+      kind: data.kind ?? NoteKind.NOTE,
       aliases: [],
       body: data.body,
-      sensitivity,
+      sensitivity: data.sensitivity,
       visible_to: data.visible_to ?? [],
       headings: parsed.headings,
       blocks: parsed.blocks,
@@ -144,7 +335,7 @@ export class KnowledgeService {
       unresolved,
       version: 1,
       updated_by: new Types.ObjectId(user.id),
-      status: 'active',
+      status: ContentStatus.ACTIVE,
     })
 
     await this.noteVersionRepository.append({
@@ -260,34 +451,56 @@ export class KnowledgeService {
     email: string
     role: string
     tenant: string
-    areas: { key: string; name: string; description?: string; default_sensitivity?: string }[]
+    areas: {
+      key: string
+      name: string
+      description?: string
+      default_sensitivity?: string
+      can_read: boolean
+      can_write: boolean
+      can_manage: boolean
+    }[]
+    writable_areas: string[]
     note_counts: Record<string, number>
   }> {
-    const [allAreas, notes] = await Promise.all([
-      this.areaRepository.findAllByTenant(user.tenant),
-      this.noteRepository.list(user.tenant, user.areas, undefined, 500),
-    ])
+    const allAreas = await this.areaRepository.findAllByTenant(user.tenant)
 
-    const accessibleAreas =
-      user.role === 'admin'
-        ? allAreas
-        : allAreas.filter((a) => user.areas.includes(a.key))
+    const accessibleAreas = isTenantAdmin(user)
+      ? allAreas
+      : allAreas.filter((a) => readableAreas(user).includes(a.key))
+
+    const notes = await this.noteRepository.list(
+      user.tenant,
+      accessibleAreas.map((a) => a.key),
+      undefined,
+      500,
+    )
 
     const note_counts: Record<string, number> = {}
     for (const area of accessibleAreas) {
       note_counts[area.key] = notes.filter((n) => n.area === area.key).length
     }
 
-    return {
-      email: user.email,
-      role: user.role,
-      tenant: user.tenant,
-      areas: accessibleAreas.map((a) => ({
+    // Access levels mirror PermissionService.accessTo: read < write < manage.
+    const areas = accessibleAreas.map((a) => {
+      const access = this.permissionService.accessTo(user, a.key)
+      return {
         key: a.key,
         name: a.name,
         description: a.description,
         default_sensitivity: a.default_sensitivity,
-      })),
+        can_read: access !== 'none',
+        can_write: access === AreaAccess.WRITE || access === AreaAccess.MANAGE,
+        can_manage: access === AreaAccess.MANAGE,
+      }
+    })
+
+    return {
+      email: user.email,
+      role: user.role,
+      tenant: user.tenant,
+      areas,
+      writable_areas: areas.filter((a) => a.can_write).map((a) => a.key),
       note_counts,
     }
   }

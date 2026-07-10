@@ -1,5 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose'
 import { HydratedDocument, Types } from 'mongoose'
+import { Sensitivity } from '@/commons/enums'
 
 export type NoteVersionDocument = HydratedDocument<NoteVersion>
 
@@ -20,7 +21,7 @@ export class NoteVersion {
   @Prop({ required: true })
   body: string
 
-  @Prop({ required: true, enum: ['public_org', 'internal_area', 'confidential'] })
+  @Prop({ required: true, enum: Object.values(Sensitivity) })
   sensitivity: string
 
   @Prop({ type: [String], default: [] })

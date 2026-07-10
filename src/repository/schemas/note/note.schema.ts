@@ -1,5 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose'
 import { HydratedDocument, Types } from 'mongoose'
+import { ContentStatus, NoteKind, Sensitivity } from '@/commons/enums'
 
 export class Heading {
   id: string
@@ -43,13 +44,17 @@ export class Note {
   @Prop({ required: true, trim: true })
   title: string
 
+  /** See NoteKind docs in commons/enums. Index slug: "{area}-index", log slug: "{area}-log". */
+  @Prop({ default: NoteKind.NOTE, enum: Object.values(NoteKind) })
+  kind: string
+
   @Prop({ type: [String], default: [] })
   aliases: string[]
 
   @Prop({ required: true })
   body: string
 
-  @Prop({ default: 'public_org', enum: ['public_org', 'internal_area', 'confidential'] })
+  @Prop({ default: Sensitivity.PUBLIC_ORG, enum: Object.values(Sensitivity) })
   sensitivity: string
 
   @Prop({ type: [String], default: [] })
@@ -74,16 +79,16 @@ export class Note {
   @Prop({ type: Types.ObjectId })
   updated_by: Types.ObjectId
 
-  @Prop({ default: 'active', enum: ['active', 'archived'] })
+  @Prop({ default: ContentStatus.ACTIVE, enum: Object.values(ContentStatus) })
   status: string
 }
 
 export const NoteSchema = SchemaFactory.createForClass(Note)
 
-// Indexes from the design doc §2.5
 NoteSchema.index({ tenant: 1, slug: 1 }, { unique: true })
 NoteSchema.index({ tenant: 1, aliases: 1 })
 NoteSchema.index({ tenant: 1, area: 1, sensitivity: 1 })
+NoteSchema.index({ tenant: 1, area: 1, kind: 1 })
 NoteSchema.index({ tenant: 1, 'outlinks.target_id': 1 })
 NoteSchema.index({ tenant: 1, 'unresolved.name': 1 })
 NoteSchema.index(

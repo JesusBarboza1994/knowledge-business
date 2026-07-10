@@ -53,7 +53,7 @@ export class TokenService {
       id: payload.id,
       email: payload.email,
       tenant: payload.tenant,
-      areas: payload.areas,
+      memberships: payload.memberships ?? [],
       role: payload.role,
     }
   }

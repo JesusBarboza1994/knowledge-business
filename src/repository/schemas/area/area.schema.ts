@@ -1,5 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose'
 import { HydratedDocument, Types } from 'mongoose'
+import { ContentStatus, Sensitivity } from '@/commons/enums'
 
 export type AreaDocument = HydratedDocument<Area>
 
@@ -17,13 +18,13 @@ export class Area {
   @Prop({ trim: true })
   description: string
 
-  @Prop({ default: 'public_org', enum: ['public_org', 'internal_area', 'confidential'] })
+  @Prop({ default: Sensitivity.PUBLIC_ORG, enum: Object.values(Sensitivity) })
   default_sensitivity: string
 
   @Prop({ type: [Types.ObjectId], default: [] })
   admins: Types.ObjectId[]
 
-  @Prop({ default: 'active', enum: ['active', 'archived'] })
+  @Prop({ default: ContentStatus.ACTIVE, enum: Object.values(ContentStatus) })
   status: string
 }
 

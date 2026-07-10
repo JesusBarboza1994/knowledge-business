@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common'
 import { McpTool, ToolDefinition } from '../tool.interface'
 import { UserProfile } from '../user-profile.type'
 import { KnowledgeService } from '@/modules/knowledge/services/knowledge.service'
+import { LinkDirection } from '@/commons/enums'
 import { kbSearchSchema } from './schemas/kb-search.schema'
 import { kbGetSchema } from './schemas/kb-get.schema'
 import { kbLinksSchema } from './schemas/kb-links.schema'
@@ -17,24 +18,33 @@ export class KbTool implements McpTool {
   definitions(user: UserProfile): ToolDefinition[] {
     return [
       {
+        name: 'kb_home',
+        description:
+          "Navigation entry point — call FIRST in a session. Returns your accessible areas with access level (read/write/manage) and the slug of each area's index (Map of Content) and activity log. Read the relevant index with kb_get, then follow [[links]] to drill into notes. Prefer this over blind kb_search.",
+        schema: {},
+        handler: async () => this.knowledgeService.home(user),
+      },
+      {
         name: 'kb_search',
-        description: 'Search notes by natural language query. Returns ranked candidates without full body.',
+        description:
+          'Full-text search over notes. Returns ranked candidates without full body. Use as a shortcut when the area index does not cover the topic — prefer navigating from kb_home → index → [[links]] first.',
         schema: kbSearchSchema,
         handler: async ({ query, limit }: { query: string; limit?: number }) =>
           this.knowledgeService.search(query, user, limit),
       },
       {
         name: 'kb_get',
-        description: 'Retrieve a note by slug or alias. Returns full body and metadata.',
+        description:
+          'Retrieve a note by slug or alias. Returns full body and metadata. Links to notes you cannot read appear as 🔒 [restricted].',
         schema: kbGetSchema,
-        handler: async ({ ref }: { ref: string }) => this.knowledgeService.get(ref, user),
+        handler: async ({ ref }: { ref: string }) => this.knowledgeService.getRedacted(ref, user),
       },
       {
         name: 'kb_links',
         description:
           'Get outgoing and/or incoming [[links]] for a note. Only returns links the caller can see.',
         schema: kbLinksSchema,
-        handler: async ({ ref, dir }: { ref: string; dir: 'out' | 'in' | 'both' }) =>
+        handler: async ({ ref, dir }: { ref: string; dir: LinkDirection }) =>
           this.knowledgeService.links(ref, dir, user),
       },
       {

@@ -3,6 +3,7 @@ import { UserRepository } from '@/repository/schemas/user/user.repository'
 import { TokenService } from '@/providers/token/token.service'
 import { PasswordService } from '@/providers/password/password.service'
 import { UnauthorizedException } from '@/commons/exceptions/auth/unauthorized.exception'
+import { AreaAccess, UserRole } from '@/commons/enums'
 
 @Injectable()
 export class AuthService {
@@ -24,8 +25,8 @@ export class AuthService {
       id: user._id.toString(),
       email: user.email,
       tenant: user.tenant,
-      areas: user.areas,
-      role: user.role,
+      memberships: (user.memberships ?? []).map((m) => ({ area: m.area, access: m.access as AreaAccess })),
+      role: user.role as UserRole,
     })
   }
 }

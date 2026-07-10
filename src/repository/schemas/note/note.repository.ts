@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common'
 import { InjectModel } from '@nestjs/mongoose'
 import { FilterQuery, Model, Types } from 'mongoose'
 import { Note, NoteDocument, Outlink } from './note.schema'
+import { ContentStatus, Sensitivity } from '@/commons/enums'
 
 export interface NoteSearchFilter {
   tenant: string
@@ -23,23 +24,33 @@ export class NoteRepository {
   }
 
   async findBySlug(tenant: string, slug: string): Promise<NoteDocument | null> {
-    return this.model.findOne({ tenant, slug, status: 'active' }).exec()
+    return this.model.findOne({ tenant, slug, status: ContentStatus.ACTIVE }).exec()
   }
 
   async findById(tenant: string, id: string): Promise<NoteDocument | null> {
-    return this.model.findOne({ tenant, _id: new Types.ObjectId(id), status: 'active' }).exec()
+    return this.model.findOne({ tenant, _id: new Types.ObjectId(id), status: ContentStatus.ACTIVE }).exec()
+  }
+
+  async findByIds(tenant: string, ids: string[]): Promise<NoteDocument[]> {
+    return this.model
+      .find({ tenant, _id: { $in: ids.map((id) => new Types.ObjectId(id)) }, status: ContentStatus.ACTIVE })
+      .exec()
+  }
+
+  async findByAreaKind(tenant: string, area: string, kind: string): Promise<NoteDocument | null> {
+    return this.model.findOne({ tenant, area, kind, status: ContentStatus.ACTIVE }).exec()
   }
 
   async findAllActive(): Promise<NoteDocument[]> {
     return this.model
-      .find({ status: 'active' })
+      .find({ status: ContentStatus.ACTIVE })
       .select('tenant area slug aliases sensitivity visible_to outlinks version')
       .exec()
   }
 
   async findBySlugOrAlias(tenant: string, ref: string): Promise<NoteDocument | null> {
     return this.model
-      .findOne({ tenant, status: 'active', $or: [{ slug: ref }, { aliases: ref }] })
+      .findOne({ tenant, status: ContentStatus.ACTIVE, $or: [{ slug: ref }, { aliases: ref }] })
       .exec()
   }
 
@@ -48,11 +59,11 @@ export class NoteRepository {
     const { tenant, areas, query, area, limit = 10 } = filter
     const permissionFilter: FilterQuery<Note> = {
       tenant,
-      status: 'active',
+      status: ContentStatus.ACTIVE,
       $or: [
         { area: { $in: areas } },
-        { sensitivity: 'public_org' },
-        { sensitivity: 'internal_area', visible_to: { $in: areas } },
+        { sensitivity: Sensitivity.PUBLIC_ORG },
+        { sensitivity: Sensitivity.INTERNAL_AREA, visible_to: { $in: areas } },
       ],
     }
     if (area) permissionFilter.area = area
@@ -69,11 +80,11 @@ export class NoteRepository {
   async list(tenant: string, areas: string[], area?: string, limit = 50): Promise<NoteDocument[]> {
     const filter: FilterQuery<Note> = {
       tenant,
-      status: 'active',
+      status: ContentStatus.ACTIVE,
       $or: [
         { area: { $in: areas } },
-        { sensitivity: 'public_org' },
-        { sensitivity: 'internal_area', visible_to: { $in: areas } },
+        { sensitivity: Sensitivity.PUBLIC_ORG },
+        { sensitivity: Sensitivity.INTERNAL_AREA, visible_to: { $in: areas } },
       ],
     }
     if (area) filter.area = area
@@ -88,13 +99,13 @@ export class NoteRepository {
 
   async softDelete(tenant: string, id: string): Promise<NoteDocument | null> {
     return this.model
-      .findOneAndUpdate({ tenant, _id: new Types.ObjectId(id) }, { $set: { status: 'archived' } }, { new: true })
+      .findOneAndUpdate({ tenant, _id: new Types.ObjectId(id) }, { $set: { status: ContentStatus.ARCHIVED } }, { new: true })
       .exec()
   }
 
   /** Resolve dangling links pointing to a slug (used on note creation) */
   async findDanglings(tenant: string, slug: string): Promise<NoteDocument[]> {
-    return this.model.find({ tenant, status: 'active', 'unresolved.name': slug }).exec()
+    return this.model.find({ tenant, status: ContentStatus.ACTIVE, 'unresolved.name': slug }).exec()
   }
 
   /** Move a dangling entry to outlinks after the target note is created */
