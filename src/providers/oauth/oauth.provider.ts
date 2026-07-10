@@ -121,7 +121,7 @@ export const knowledgeOAuthProvider: OAuthServerProvider = {
         id: entry.user.id,
         email: entry.user.email,
         tenant: entry.user.tenant,
-        areas: entry.user.areas,
+        memberships: entry.user.memberships,
         role: entry.user.role,
       },
     }

@@ -1,7 +1,25 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose'
 import { HydratedDocument } from 'mongoose'
+import { AreaAccess, UserRole, UserStatus } from '@/commons/enums'
 
 export type UserDocument = HydratedDocument<User>
+
+@Schema({ _id: false })
+export class UserMembership {
+  @Prop({ required: true, trim: true, lowercase: true })
+  area: string
+
+  @Prop({ required: true, enum: Object.values(AreaAccess) })
+  access: string
+
+  @Prop({ default: () => new Date() })
+  granted_at: Date
+
+  @Prop({ trim: true, lowercase: true, required: false })
+  granted_by?: string
+}
+
+export const UserMembershipSchema = SchemaFactory.createForClass(UserMembership)
 
 @Schema({ collection: 'users', timestamps: { createdAt: 'created_at', updatedAt: false } })
 export class User {
@@ -11,10 +29,10 @@ export class User {
   @Prop({ required: true, trim: true, lowercase: true })
   email: string
 
-  @Prop({ type: [String], default: [] })
-  areas: string[]
+  @Prop({ type: [UserMembershipSchema], default: [] })
+  memberships: UserMembership[]
 
-  @Prop({ default: 'viewer', enum: ['viewer', 'editor', 'area_admin', 'admin'] })
+  @Prop({ default: UserRole.MEMBER, enum: Object.values(UserRole) })
   role: string
 
   @Prop({ trim: true, required: false })
@@ -23,7 +41,7 @@ export class User {
   @Prop({ select: false })
   password_hash?: string
 
-  @Prop({ default: 'active', enum: ['active', 'inactive'] })
+  @Prop({ default: UserStatus.ACTIVE, enum: Object.values(UserStatus) })
   status: string
 }
 

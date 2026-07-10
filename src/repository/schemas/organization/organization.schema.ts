@@ -1,5 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose'
 import { HydratedDocument } from 'mongoose'
+import { OrganizationPlan, OrganizationStatus, Sensitivity } from '@/commons/enums'
 
 export type OrganizationDocument = HydratedDocument<Organization>
 
@@ -11,13 +12,13 @@ export class Organization {
   @Prop({ required: true, trim: true })
   name: string
 
-  @Prop({ default: 'active', enum: ['active', 'suspended', 'archived'] })
+  @Prop({ default: OrganizationStatus.ACTIVE, enum: Object.values(OrganizationStatus) })
   status: string
 
-  @Prop({ default: 'public_org', enum: ['public_org', 'internal_area', 'confidential'] })
+  @Prop({ default: Sensitivity.PUBLIC_ORG, enum: Object.values(Sensitivity) })
   default_sensitivity: string
 
-  @Prop({ default: 'enterprise', enum: ['free', 'pro', 'enterprise'] })
+  @Prop({ default: OrganizationPlan.ENTERPRISE, enum: Object.values(OrganizationPlan) })
   plan: string
 }
 
