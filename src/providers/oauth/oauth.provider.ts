@@ -2,20 +2,31 @@ import { randomUUID } from 'crypto'
 import { Response } from 'express'
 import { OAuthServerProvider } from '@modelcontextprotocol/sdk/server/auth/provider.js'
 import { OAuthRegisteredClientsStore } from '@modelcontextprotocol/sdk/server/auth/clients.js'
+import { InvalidTokenError } from '@modelcontextprotocol/sdk/server/auth/errors.js'
 import { OAuthClientInformationFull, OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js'
 import { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js'
 import { UserProfile } from '@/tools/user-profile.type'
+import { TokenService } from '@/providers/token/token.service'
 import { renderLoginForm } from './forms/loginPage'
 
 const clients = new Map<string, OAuthClientInformationFull>()
-const TOKEN_TTL_MS = 86400 * 30 * 1000 // 30 days
+const MCP_TOKEN_CLIENT_ID = 'knowledge-hub-token'
 
 const codes = new Map<string, { clientId: string; codeChallenge: string; redirectUri: string; user: UserProfile }>()
-const tokens = new Map<string, { clientId: string; scopes: string[]; user: UserProfile; expiresAt: number }>()
 const pendingAuthorizations = new Map<
   string,
   { clientId: string; codeChallenge: string; redirectUri: string; state?: string }
 >()
+let tokenService: TokenService | undefined
+
+export function configureOAuthProvider(dependencies: { tokenService: TokenService }) {
+  tokenService = dependencies.tokenService
+}
+
+function getTokenService(): TokenService {
+  if (!tokenService) throw new Error('OAuth provider has not been configured with TokenService')
+  return tokenService
+}
 
 const clientsStore: OAuthRegisteredClientsStore = {
   getClient(clientId: string) {
@@ -56,7 +67,11 @@ export function createAuthorizationCode(
 }
 
 export function getUserFromToken(token: string): UserProfile | undefined {
-  return tokens.get(token)?.user
+  try {
+    return getTokenService().extractFromToken(token)
+  } catch {
+    return undefined
+  }
 }
 
 export const knowledgeOAuthProvider: OAuthServerProvider = {
@@ -88,15 +103,14 @@ export const knowledgeOAuthProvider: OAuthServerProvider = {
     if (!entry) throw new Error('Invalid authorization code')
     codes.delete(authorizationCode)
 
-    const accessToken = randomUUID()
-    const expiresAt = Date.now() + TOKEN_TTL_MS
-    tokens.set(accessToken, { clientId: entry.clientId, scopes: ['mcp'], user: entry.user, expiresAt })
+    const accessToken = getTokenService().generateToken(entry.user)
+    const { expiresAt } = getTokenService().extractFromTokenWithExpiration(accessToken)
     console.log('[OAuth] token issued for:', entry.user.email)
 
     return {
       access_token: accessToken,
       token_type: 'bearer',
-      expires_in: Math.floor(TOKEN_TTL_MS / 1000),
+      expires_in: Math.max(0, expiresAt - Math.floor(Date.now() / 1000)),
     } as OAuthTokens
   },
 
@@ -105,24 +119,26 @@ export const knowledgeOAuthProvider: OAuthServerProvider = {
   },
 
   async verifyAccessToken(token: string): Promise<AuthInfo> {
-    const entry = tokens.get(token)
-    if (!entry) throw new Error('Invalid access token')
-    if (entry.expiresAt < Date.now()) {
-      tokens.delete(token)
-      throw new Error('Access token expired')
+    let tokenData: { user: UserProfile; expiresAt: number }
+    try {
+      tokenData = getTokenService().extractFromTokenWithExpiration(token)
+    } catch {
+      console.warn('[OAuth] invalid access token')
+      throw new InvalidTokenError('Invalid access token')
     }
-    console.log('[OAuth] verifyToken OK:', entry.user.email)
+
+    console.log('[OAuth] verifyToken OK:', tokenData.user.email)
     return {
       token,
-      clientId: entry.clientId,
-      scopes: entry.scopes,
-      expiresAt: Math.floor(entry.expiresAt / 1000),
+      clientId: MCP_TOKEN_CLIENT_ID,
+      scopes: ['mcp'],
+      expiresAt: tokenData.expiresAt,
       extra: {
-        id: entry.user.id,
-        email: entry.user.email,
-        tenant: entry.user.tenant,
-        memberships: entry.user.memberships,
-        role: entry.user.role,
+        id: tokenData.user.id,
+        email: tokenData.user.email,
+        tenant: tokenData.user.tenant,
+        memberships: tokenData.user.memberships,
+        role: tokenData.user.role,
       },
     }
   },
