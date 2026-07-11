@@ -27,6 +27,31 @@ export class TokenService {
   }
 
   extractFromToken(token: string): UserProfile {
+    const payload = this.extractPayload(token)
+    return {
+      id: payload.id,
+      email: payload.email,
+      tenant: payload.tenant,
+      memberships: payload.memberships ?? [],
+      role: payload.role,
+    }
+  }
+
+  extractFromTokenWithExpiration(token: string): { user: UserProfile; expiresAt: number } {
+    const payload = this.extractPayload(token)
+    return {
+      user: {
+        id: payload.id,
+        email: payload.email,
+        tenant: payload.tenant,
+        memberships: payload.memberships ?? [],
+        role: payload.role,
+      },
+      expiresAt: payload.exp,
+    }
+  }
+
+  private extractPayload(token: string): TokenPayload {
     const dotIndex = token.lastIndexOf('.')
     if (dotIndex === -1) throw new UnauthorizedException('Malformed token')
 
@@ -49,13 +74,7 @@ export class TokenService {
       throw new UnauthorizedException('Token expired')
     }
 
-    return {
-      id: payload.id,
-      email: payload.email,
-      tenant: payload.tenant,
-      memberships: payload.memberships ?? [],
-      role: payload.role,
-    }
+    return payload
   }
 
   private sign(encoded: string): string {

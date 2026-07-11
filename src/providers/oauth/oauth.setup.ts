@@ -1,10 +1,11 @@
 import { INestApplication } from '@nestjs/common'
 import { Express } from 'express'
 import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js'
-import { knowledgeOAuthProvider } from './oauth.provider'
+import { configureOAuthProvider, knowledgeOAuthProvider } from './oauth.provider'
 import { renderError } from './forms/errorPage'
 import { renderSuccess } from './forms/successPage'
 import { OAuthLoginService } from '@/modules/auth/oauth-login.service'
+import { TokenService } from '@/providers/token/token.service'
 
 const ERROR_PAGES: Record<string, { status: number; message: string; keepNonce: boolean }> = {
   invalid_data: { status: 400, message: 'Datos invalidos. Cierra esta ventana e intenta de nuevo.', keepNonce: false },
@@ -24,6 +25,8 @@ const ERROR_PAGES: Record<string, { status: number; message: string; keepNonce: 
  *   knowledgeOAuthProvider.authorize).
  */
 export function setupOAuth(app: INestApplication, issuerUrl: URL): void {
+  configureOAuthProvider({ tokenService: app.get(TokenService) })
+
   app.use(
     mcpAuthRouter({
       provider: knowledgeOAuthProvider,
