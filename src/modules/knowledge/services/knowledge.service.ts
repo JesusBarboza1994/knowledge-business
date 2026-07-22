@@ -1,9 +1,4 @@
-import {
-  ConflictException,
-  ForbiddenException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common'
+import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common'
 import { Types } from 'mongoose'
 import { NoteRepository } from '@/repository/schemas/note/note.repository'
 import { NoteVersionRepository } from '@/repository/schemas/note-version/note-version.repository'
@@ -63,6 +58,15 @@ export interface UpdateNotePatch {
   visible_to?: string[]
 }
 
+export interface GetNoteOptions {
+  mode?: 'preview' | 'full'
+  heading?: string
+  max_chars?: number
+}
+
+const DEFAULT_PREVIEW_CHARS = 1800
+const MAX_PREVIEW_CHARS = 6000
+
 @Injectable()
 export class KnowledgeService {
   constructor(
@@ -107,9 +111,7 @@ export class KnowledgeService {
     }[]
   }> {
     const allAreas = await this.areaRepository.findAllByTenant(user.tenant)
-    const accessible = isTenantAdmin(user)
-      ? allAreas
-      : allAreas.filter((a) => readableAreas(user).includes(a.key))
+    const accessible = isTenantAdmin(user) ? allAreas : allAreas.filter((a) => readableAreas(user).includes(a.key))
 
     const areas = await Promise.all(
       accessible.map(async (a) => {
@@ -132,10 +134,7 @@ export class KnowledgeService {
   }
 
   /** Creates the area's index (MOC) and log pages if missing. Idempotent. */
-  private async ensureAreaScaffold(
-    area: AreaDocument,
-    user: UserProfile,
-  ): Promise<{ index: string; log: string }> {
+  private async ensureAreaScaffold(area: AreaDocument, user: UserProfile): Promise<{ index: string; log: string }> {
     const indexSlug = `${area.key}-index`
     const logSlug = `${area.key}-log`
     const sensitivity = area.default_sensitivity ?? Sensitivity.PUBLIC_ORG
@@ -190,10 +189,99 @@ export class KnowledgeService {
   }
 
   /** Note served for display: body has links to unauthorized targets redacted. */
-  async getRedacted(ref: string, user: UserProfile): Promise<Record<string, unknown>> {
+  async getRedacted(ref: string, user: UserProfile, options: GetNoteOptions = {}): Promise<Record<string, unknown>> {
     const note = await this.get(ref, user)
     const body = await this.redactBody(note, user)
-    return { ...note.toObject(), body }
+    const selected = options.heading ? this.extractHeadingSection(body, options.heading) : body
+    if (selected === null) throw new NotFoundException(`Heading not found: ${options.heading}`)
+
+    return this.serializeNote(note, selected, options, body.length)
+  }
+
+  private serializeNote(
+    note: NoteDocument,
+    selectedBody: string,
+    options: GetNoteOptions,
+    fullBodyLength: number,
+  ): Record<string, unknown> {
+    const raw = note.toObject() as unknown as Record<string, unknown>
+    const { body: _body, blocks, updated_by: _updatedBy, __v: _versionKey, ...metadata } = raw
+    const mode = options.mode ?? 'preview'
+
+    if (mode === 'full') {
+      return {
+        ...metadata,
+        body: selectedBody,
+        body_length: selectedBody.length,
+        full_body_length: fullBodyLength,
+        block_count: Array.isArray(blocks) ? blocks.length : 0,
+        body_truncated: false,
+      }
+    }
+
+    const maxChars = Math.min(options.max_chars ?? DEFAULT_PREVIEW_CHARS, MAX_PREVIEW_CHARS)
+    const body = this.truncateMarkdown(selectedBody, maxChars)
+
+    return {
+      ...metadata,
+      body,
+      body_length: selectedBody.length,
+      full_body_length: fullBodyLength,
+      block_count: Array.isArray(blocks) ? blocks.length : 0,
+      body_truncated: body.length < selectedBody.length,
+      read_more: options.heading
+        ? 'Call kb_get with mode: "full" and the same heading to read the complete section.'
+        : 'Call kb_get with mode: "full", or pass heading to read only one section.',
+    }
+  }
+
+  private truncateMarkdown(body: string, maxChars: number): string {
+    if (body.length <= maxChars) return body
+
+    const truncated = body.slice(0, maxChars)
+    const lastBreak = Math.max(truncated.lastIndexOf('\n\n'), truncated.lastIndexOf('\n'))
+    const cut = lastBreak >= Math.floor(maxChars * 0.6) ? truncated.slice(0, lastBreak) : truncated
+    return `${cut.trimEnd()}\n\n[truncated]`
+  }
+
+  private extractHeadingSection(body: string, heading: string): string | null {
+    const lines = body.split('\n')
+    const target = this.normalizeHeading(heading)
+
+    let start = -1
+    let level = 0
+
+    for (let i = 0; i < lines.length; i++) {
+      const match = lines[i].match(/^(#{1,6})\s+(.+)$/)
+      if (!match) continue
+      if (this.normalizeHeading(match[2]) === target) {
+        start = i
+        level = match[1].length
+        break
+      }
+    }
+
+    if (start === -1) return null
+
+    let end = lines.length
+    for (let i = start + 1; i < lines.length; i++) {
+      const match = lines[i].match(/^(#{1,6})\s+(.+)$/)
+      if (match && match[1].length <= level) {
+        end = i
+        break
+      }
+    }
+
+    return lines.slice(start, end).join('\n').trim()
+  }
+
+  private normalizeHeading(value: string): string {
+    return value
+      .trim()
+      .toLowerCase()
+      .replace(/^#+\s*/, '')
+      .replace(/[^a-z0-9áéíóúüñ]+/g, '-')
+      .replace(/^-+|-+$/g, '')
   }
 
   /**
@@ -219,9 +307,7 @@ export class KnowledgeService {
     if (ids.length === 0) return note.body
 
     const targets = await this.noteRepository.findByIds(user.tenant, ids)
-    const denied = new Set(
-      targets.filter((t) => !this.permissionService.canView(user, t)).map((t) => t._id.toString()),
-    )
+    const denied = new Set(targets.filter((t) => !this.permissionService.canView(user, t)).map((t) => t._id.toString()))
     if (denied.size === 0) return note.body
 
     return note.body.replace(wikilink, (full, inner: string) => {
@@ -376,12 +462,7 @@ export class KnowledgeService {
     return note
   }
 
-  async update(
-    id: string,
-    patch: UpdateNotePatch,
-    baseVersion: number,
-    user: UserProfile,
-  ): Promise<NoteDocument> {
+  async update(id: string, patch: UpdateNotePatch, baseVersion: number, user: UserProfile): Promise<NoteDocument> {
     const note = await this.noteRepository.findById(user.tenant, id)
     if (!note) throw new NotFoundException()
     if (!this.permissionService.canEdit(user, note)) throw new ForbiddenException()
@@ -465,9 +546,7 @@ export class KnowledgeService {
   }> {
     const allAreas = await this.areaRepository.findAllByTenant(user.tenant)
 
-    const accessibleAreas = isTenantAdmin(user)
-      ? allAreas
-      : allAreas.filter((a) => readableAreas(user).includes(a.key))
+    const accessibleAreas = isTenantAdmin(user) ? allAreas : allAreas.filter((a) => readableAreas(user).includes(a.key))
 
     const notes = await this.noteRepository.list(
       user.tenant,

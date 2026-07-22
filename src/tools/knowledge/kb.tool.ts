@@ -3,6 +3,7 @@ import { McpTool, ToolDefinition } from '../tool.interface'
 import { UserProfile } from '../user-profile.type'
 import { KnowledgeService } from '@/modules/knowledge/services/knowledge.service'
 import { LinkDirection } from '@/commons/enums'
+import { NoteDocument } from '@/repository/schemas/note/note.schema'
 import { kbSearchSchema } from './schemas/kb-search.schema'
 import { kbGetSchema } from './schemas/kb-get.schema'
 import { kbLinksSchema } from './schemas/kb-links.schema'
@@ -10,6 +11,19 @@ import { kbListSchema } from './schemas/kb-list.schema'
 import { kbCreateSchema } from './schemas/kb-create.schema'
 import { kbUpdateSchema } from './schemas/kb-update.schema'
 import { kbDeleteSchema } from './schemas/kb-delete.schema'
+
+/** Compact confirmation for create/update — avoids echoing the full body back to the caller. */
+function toSummary(note: NoteDocument) {
+  return {
+    id: note._id.toString(),
+    slug: note.slug,
+    area: note.area,
+    kind: note.kind,
+    title: note.title,
+    version: note.version,
+    sensitivity: note.sensitivity,
+  }
+}
 
 @Injectable()
 export class KbTool implements McpTool {
@@ -35,14 +49,23 @@ export class KbTool implements McpTool {
       {
         name: 'kb_get',
         description:
-          'Retrieve a note by slug or alias. Returns full body and metadata. Links to notes you cannot read appear as 🔒 [restricted].',
+          'Retrieve a note by slug or alias. Defaults to a compact preview to control token use; pass mode: "full" only when the complete body is needed. Use heading to fetch a single section. Links to notes you cannot read appear as 🔒 [restricted].',
         schema: kbGetSchema,
-        handler: async ({ ref }: { ref: string }) => this.knowledgeService.getRedacted(ref, user),
+        handler: async ({
+          ref,
+          mode,
+          heading,
+          max_chars,
+        }: {
+          ref: string
+          mode?: 'preview' | 'full'
+          heading?: string
+          max_chars?: number
+        }) => this.knowledgeService.getRedacted(ref, user, { mode, heading, max_chars }),
       },
       {
         name: 'kb_links',
-        description:
-          'Get outgoing and/or incoming [[links]] for a note. Only returns links the caller can see.',
+        description: 'Get outgoing and/or incoming [[links]] for a note. Only returns links the caller can see.',
         schema: kbLinksSchema,
         handler: async ({ ref, dir }: { ref: string; dir: LinkDirection }) =>
           this.knowledgeService.links(ref, dir, user),
@@ -51,12 +74,12 @@ export class KbTool implements McpTool {
         name: 'kb_list',
         description: 'List notes metadata (no body). Filtered by caller permissions.',
         schema: kbListSchema,
-        handler: async ({ limit }: { limit?: number }) =>
-          this.knowledgeService.list(user, limit),
+        handler: async ({ limit }: { limit?: number }) => this.knowledgeService.list(user, limit),
       },
       {
         name: 'kb_create',
-        description: 'Create a new note. Use [[Title]] in body for internal links.',
+        description:
+          'Create a new note. Use [[Title]] in body for internal links. Returns a compact confirmation (id, slug, version) — not the full note body.',
         schema: kbCreateSchema,
         handler: async (data: {
           area: string
@@ -64,11 +87,12 @@ export class KbTool implements McpTool {
           body: string
           sensitivity?: string
           visible_to?: string[]
-        }) => this.knowledgeService.create(data, user),
+        }) => toSummary(await this.knowledgeService.create(data, user)),
       },
       {
         name: 'kb_update',
-        description: 'Update an existing note. Provide base_version for optimistic locking.',
+        description:
+          'Update an existing note. Provide base_version for optimistic locking. Returns a compact confirmation (id, slug, version) — not the full note body.',
         schema: kbUpdateSchema,
         handler: async ({
           id,
@@ -81,7 +105,7 @@ export class KbTool implements McpTool {
           title?: string
           sensitivity?: string
           visible_to?: string[]
-        }) => this.knowledgeService.update(id, patch, base_version, user),
+        }) => toSummary(await this.knowledgeService.update(id, patch, base_version, user)),
       },
       {
         name: 'kb_delete',
