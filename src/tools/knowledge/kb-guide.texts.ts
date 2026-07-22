@@ -17,7 +17,7 @@ export const INGEST_GUIDE = `You are ingesting a document into the Knowledge Hub
 - Call \`kb_home\`. It returns the areas you can access, your access level on each (\`read\` | \`write\` | \`manage\`), and the slug of each area's **index** (Map of Content) and **log**.
 - You may **only create or update notes in areas where your access is \`write\` or \`manage\`**. The server rejects writes elsewhere.
 - Pick the target area by matching the document's topic against each area's \`name\` / \`description\`. If **no** writable area clearly fits, **stop and ask the user** which area to use instead of guessing.
-- Read the target area's index (\`kb_get\` on its index slug) to understand how knowledge is currently organized there.
+- Read the target area's index (\`kb_get\` on its index slug, default preview first) to understand how knowledge is currently organized there.
 - **First time in an area** (the index has no entries yet): call \`kb_list\`, populate the index with the existing notes (one line each, grouped by theme) **before** ingesting new content. This is the initial setup of the area.
 
 ## Language
@@ -26,7 +26,8 @@ export const INGEST_GUIDE = `You are ingesting a document into the Knowledge Hub
 
 ## 1. Understand existing state
 - The area index is your map: follow its \`[[links]]\` to notes related to the document's topics.
-- Complement with \`kb_search\` on key concepts and \`kb_get\` on relevant matches.
+- Complement with \`kb_search\` on key concepts and \`kb_get\` previews on relevant matches.
+- Use \`kb_get { mode: "full" }\` only for notes you will update or cite in detail.
 
 ## 2. Decomposition rules
 - **One concept = one note.** Never dump the full document into a single note.
@@ -103,8 +104,8 @@ The Knowledge Hub is a **compiled wiki** — knowledge has already been decompos
 
 ## Strategy (index-first, search as shortcut)
 1. \`kb_home\` → identify the area(s) most relevant to the question.
-2. \`kb_get\` the area's index and scan its one-line entries for relevant notes.
-3. \`kb_get\` the promising notes. Follow the **typed edges** to expand context:
+2. \`kb_get\` the area's index in preview mode and scan its one-line entries for relevant notes.
+3. \`kb_get\` previews for at most 1-3 promising notes. If a note is long, pass \`heading\` to read only the relevant section. Use \`mode: "full"\` only when the answer requires exact full-note context. Follow the **typed edges** to expand context:
    - \`extends::\` and \`related::\` links often contain deeper detail.
    - \`contradicts::\` links reveal conflicting information you must surface.
    - \`derived_from::\` links trace back to source provenance.
