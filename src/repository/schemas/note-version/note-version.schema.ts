@@ -6,6 +6,8 @@ export type NoteVersionDocument = HydratedDocument<NoteVersion>
 
 @Schema({ collection: 'note_versions', timestamps: { createdAt: 'edited_at', updatedAt: false } })
 export class NoteVersion {
+  edited_at?: Date
+
   @Prop({ type: Types.ObjectId, required: true, index: true })
   note_id: Types.ObjectId
 

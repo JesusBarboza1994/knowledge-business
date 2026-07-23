@@ -12,8 +12,7 @@ export class KbResource implements McpResource {
       {
         name: 'kb_me',
         uri: 'kb://me',
-        description:
-          'Current user identity, accessible areas, permissions summary, and note counts.',
+        description: 'Current user identity, accessible areas, permissions summary, and note counts.',
         mimeType: 'application/json',
         handler: async (uri) => {
           const context = await this.knowledgeService.getMyContext(user)

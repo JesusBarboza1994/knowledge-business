@@ -32,6 +32,9 @@ export type NoteDocument = HydratedDocument<Note>
 
 @Schema({ collection: 'notes', timestamps: { createdAt: 'created_at', updatedAt: 'updated_at' } })
 export class Note {
+  created_at?: Date
+  updated_at?: Date
+
   @Prop({ required: true, trim: true, lowercase: true })
   tenant: string
 

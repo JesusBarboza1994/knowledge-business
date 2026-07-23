@@ -14,7 +14,11 @@ export class TokenService {
   private readonly ttlSeconds: number
 
   constructor(private readonly configService: ConfigService) {
-    this.secret = this.configService.get<string>('auth.secret') ?? 'changeme'
+    const configuredSecret = this.configService.get<string>('auth.secret')
+    if (!configuredSecret && process.env.NODE_ENV === 'production') {
+      throw new Error('AUTH_TOKEN_SECRET is required in production')
+    }
+    this.secret = configuredSecret ?? 'changeme-development-only'
     this.ttlSeconds = this.configService.get<number>('auth.tokenTtl') ?? 86400 * 30
   }
 
@@ -31,6 +35,7 @@ export class TokenService {
     return {
       id: payload.id,
       email: payload.email,
+      name: payload.name,
       tenant: payload.tenant,
       memberships: payload.memberships ?? [],
       role: payload.role,
@@ -43,6 +48,7 @@ export class TokenService {
       user: {
         id: payload.id,
         email: payload.email,
+        name: payload.name,
         tenant: payload.tenant,
         memberships: payload.memberships ?? [],
         role: payload.role,

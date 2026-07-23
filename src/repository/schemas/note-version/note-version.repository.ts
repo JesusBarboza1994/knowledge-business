@@ -10,8 +10,12 @@ export class NoteVersionRepository {
     private readonly model: Model<NoteVersionDocument>,
   ) {}
 
-  async append(data: Partial<NoteVersion>): Promise<NoteVersionDocument> {
-    return this.model.create(data)
+  async append(data: Partial<NoteVersion>): Promise<void> {
+    await this.model.updateOne(
+      { note_id: data.note_id, version: data.version },
+      { $setOnInsert: data },
+      { upsert: true },
+    )
   }
 
   async findByNoteId(noteId: string): Promise<NoteVersionDocument[]> {

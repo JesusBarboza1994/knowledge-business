@@ -59,10 +59,12 @@ export class ResponseInterceptor<T> implements NestInterceptor<T, ResponseSucces
       code = ResponseCode.VALIDATION_REQUEST_ERROR
       details = zodError.issues
     } else if (exception instanceof HttpException) {
-      const httpError = exception.getResponse() as ErrorResponse
+      const responseBody = exception.getResponse()
+      const httpError =
+        typeof responseBody === 'object' ? (responseBody as Partial<ErrorResponse> & { statusCode?: number }) : {}
 
-      status = httpError.status
-      code = httpError.code
+      status = httpError.status ?? httpError.statusCode ?? exception.getStatus()
+      code = httpError.code ?? `HTTP_${status}`
       details = httpError.details ?? {}
     } else {
       details = {}
@@ -81,7 +83,7 @@ export class ResponseInterceptor<T> implements NestInterceptor<T, ResponseSucces
       details,
       stack,
     }
-    this.logger.debug({ ...result, method, request: { body, query, params } })
+    this.logger.debug({ ...result, method, request: { body: this.redactSecrets(body), query, params } })
 
     response.status(status).json(result)
   }
@@ -110,8 +112,19 @@ export class ResponseInterceptor<T> implements NestInterceptor<T, ResponseSucces
       message,
       data: responseData,
     }
-    this.logger.debug({ ...result, method, request: { body, query, params } })
+    this.logger.debug({ ...result, method, request: { body: this.redactSecrets(body), query, params } })
 
     return result
+  }
+
+  private redactSecrets(value: unknown): unknown {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return value
+    const sensitive = new Set(['password', 'password_hash', 'access_token', 'token'])
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, item]) => [
+        key,
+        sensitive.has(key.toLowerCase()) ? '[REDACTED]' : item,
+      ]),
+    )
   }
 }

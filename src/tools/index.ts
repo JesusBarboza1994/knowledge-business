@@ -16,12 +16,7 @@ export class McpToolsController {
   private readonly prompts: McpPrompt[]
   private readonly resources: McpResource[]
 
-  constructor(
-    kbTool: KbTool,
-    kbGuideTool: KbGuideTool,
-    kbPrompt: KbPrompt,
-    kbResource: KbResource,
-  ) {
+  constructor(kbTool: KbTool, kbGuideTool: KbGuideTool, kbPrompt: KbPrompt, kbResource: KbResource) {
     this.tools = [kbTool, kbGuideTool]
     this.prompts = [kbPrompt]
     this.resources = [kbResource]
@@ -30,17 +25,24 @@ export class McpToolsController {
   register(server: McpServer, user: UserProfile) {
     for (const tool of this.tools) {
       for (const { name, description, schema, handler } of tool.definitions(user)) {
-        server.tool(name, description, schema, withToolInterceptor(name, (args) => {
-          console.log(`[MCP][Tool] ${name} | user: ${user.email} | tenant: ${user.tenant}`)
-          return handler(args)
-        }))
+        server.tool(
+          name,
+          description,
+          schema,
+          withToolInterceptor(name, (args) => {
+            console.log(`[MCP][Tool] ${name} | user: ${user.email} | tenant: ${user.tenant}`)
+            return handler(args)
+          }),
+        )
       }
     }
 
     for (const prompt of this.prompts) {
       for (const { name, description, argsSchema, handler } of prompt.definitions(user)) {
         const wrappedHandler = (args: Record<string, string>) => {
-          console.log(`[MCP][Prompt] ${name} | user: ${user.email} | tenant: ${user.tenant} | args: ${JSON.stringify(args)}`)
+          console.log(
+            `[MCP][Prompt] ${name} | user: ${user.email} | tenant: ${user.tenant} | args: ${JSON.stringify(args)}`,
+          )
           return handler(args)
         }
         if (argsSchema) {

@@ -2,6 +2,9 @@ import { ConflictException, Injectable, NotFoundException } from '@nestjs/common
 import { UserRepository } from '@/repository/schemas/user/user.repository'
 import { PasswordService } from '@/providers/password/password.service'
 import { CreateUserDto } from './dto/create-user.dto'
+import { InviteUserDto, UpdateUserAccessDto } from './dto/invite-user.dto'
+import { UserStatus } from '@/commons/enums'
+import { User } from '@/repository/schemas/user/user.schema'
 
 @Injectable()
 export class UsersService {
@@ -36,6 +39,42 @@ export class UsersService {
 
   async findAll(tenant: string) {
     return this.userRepository.findAllByTenant(tenant)
+  }
+
+  async invite(tenant: string, dto: InviteUserDto, grantedBy: string) {
+    const existing = await this.userRepository.findByEmailAnyStatus(tenant, dto.email)
+    if (existing) throw new ConflictException(`User "${dto.email}" already exists`)
+    return this.userRepository.create({
+      tenant,
+      email: dto.email,
+      name: dto.name,
+      role: dto.role,
+      status: UserStatus.INVITED,
+      memberships: dto.memberships.map((membership) => ({
+        ...membership,
+        granted_at: new Date(),
+        granted_by: grantedBy,
+      })),
+    })
+  }
+
+  async updateAccess(tenant: string, id: string, dto: UpdateUserAccessDto, grantedBy: string) {
+    const existing = await this.userRepository.findById(tenant, id)
+    if (!existing) throw new NotFoundException('User not found')
+    const { memberships, ...rest } = dto
+    const data: Partial<User> = {
+      ...rest,
+      ...(memberships === undefined
+        ? {}
+        : {
+            memberships: memberships.map((membership) => ({
+              ...membership,
+              granted_at: new Date(),
+              granted_by: grantedBy,
+            })),
+          }),
+    }
+    return this.userRepository.updateById(tenant, id, data)
   }
 
   async setPassword(tenant: string, email: string, password: string): Promise<void> {

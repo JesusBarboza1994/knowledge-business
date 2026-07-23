@@ -25,11 +25,7 @@ export class OAuthLoginService {
     private readonly userRepository: UserRepository,
   ) {}
 
-  async completeAuthorization(
-    nonce?: string,
-    email?: string,
-    password?: string,
-  ): Promise<OAuthLoginResult> {
+  async completeAuthorization(nonce?: string, email?: string, password?: string): Promise<OAuthLoginResult> {
     if (!nonce || !email || !password) return { ok: false, reason: 'invalid_data' }
 
     const pending = getPendingAuthorization(nonce)

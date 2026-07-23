@@ -1,37 +1,47 @@
-import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common'
+import { Body, Controller, ForbiddenException, Get, Param, Patch, Post } from '@nestjs/common'
 import { UsersService } from './users.service'
 import { CreateUserDto } from './dto/create-user.dto'
 import { SetPasswordDto } from './dto/set-password.dto'
+import { InviteUserDto, UpdateUserAccessDto } from './dto/invite-user.dto'
+import { CurrentUser } from '@/commons/decorators/current-user.decorator'
+import { UserProfile, isTenantAdmin } from '@/tools/user-profile.type'
+import { UserRole } from '@/commons/enums'
 
 @Controller('users')
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
   @Post()
-  create(@Body() dto: CreateUserDto) {
+  create(@Body() dto: CreateUserDto, @CurrentUser() user: UserProfile) {
+    if (user.role !== UserRole.SUPERADMIN) throw new ForbiddenException('Superadmin role required')
     return this.usersService.create(dto)
   }
 
   @Get()
-  findAll(@Query('tenant') tenant: string) {
-    return this.usersService.findAll(tenant)
+  findAll(@CurrentUser() user: UserProfile) {
+    this.assertTenantAdmin(user)
+    return this.usersService.findAll(user.tenant)
   }
 
-  @Patch(':tenant/:email')
-  update(
-    @Param('tenant') tenant: string,
-    @Param('email') email: string,
-    @Body() dto: Partial<CreateUserDto>,
-  ) {
-    return this.usersService.update(tenant, email, dto)
+  @Post('invite')
+  invite(@Body() dto: InviteUserDto, @CurrentUser() user: UserProfile) {
+    this.assertTenantAdmin(user)
+    return this.usersService.invite(user.tenant, dto, user.email)
   }
 
-  @Patch(':tenant/:email/password')
-  setPassword(
-    @Param('tenant') tenant: string,
-    @Param('email') email: string,
-    @Body() dto: SetPasswordDto,
-  ) {
-    return this.usersService.setPassword(tenant, email, dto.password)
+  @Patch(':id')
+  updateAccess(@Param('id') id: string, @Body() dto: UpdateUserAccessDto, @CurrentUser() user: UserProfile) {
+    this.assertTenantAdmin(user)
+    return this.usersService.updateAccess(user.tenant, id, dto, user.email)
+  }
+
+  @Patch(':email/password')
+  setPassword(@Param('email') email: string, @Body() dto: SetPasswordDto, @CurrentUser() user: UserProfile) {
+    this.assertTenantAdmin(user)
+    return this.usersService.setPassword(user.tenant, email, dto.password)
+  }
+
+  private assertTenantAdmin(user: UserProfile): void {
+    if (!isTenantAdmin(user)) throw new ForbiddenException('Tenant admin role required')
   }
 }

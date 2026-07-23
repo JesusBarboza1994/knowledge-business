@@ -60,7 +60,11 @@ export class ParserService {
         const [namePart, anchor] = raw.split('#')
         links.push({
           display: raw,
-          name: namePart.trim().toLowerCase().replace(/[^a-z0-9áéíóúüñ]+/g, '-').replace(/^-+|-+$/g, ''),
+          name: namePart
+            .trim()
+            .toLowerCase()
+            .replace(/[^a-z0-9áéíóúüñ]+/g, '-')
+            .replace(/^-+|-+$/g, ''),
           anchor: anchor?.trim() ?? null,
           source_heading: currentHeading,
           source_block: blockId,

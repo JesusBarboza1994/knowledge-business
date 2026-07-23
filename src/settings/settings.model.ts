@@ -15,6 +15,12 @@ export interface AuthConfig {
   tokenTtl: number
 }
 
+export interface HttpConfig {
+  allowedOrigins: string
+  cookieSecure: boolean
+  cookieSameSite: 'lax' | 'strict' | 'none'
+}
+
 export interface AwsConfig {
   region: string
   accessKeyId: string

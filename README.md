@@ -1,5 +1,31 @@
 # template-mms
 
+> Este repositorio implementa actualmente el backend de Knowledge Hub. La descripción histórica de la plantilla se conserva debajo.
+
+## API web de Knowledge Hub
+
+El frontend usa sesiones firmadas en cookie `httpOnly`. Configuración mínima:
+
+```env
+MONGO_URI=mongodb://localhost:27017/knowledge-business
+AUTH_TOKEN_SECRET=replace-with-a-long-random-secret
+FRONTEND_URL=http://localhost:5173
+COOKIE_SECURE=false
+COOKIE_SAME_SITE=lax
+```
+
+Rutas principales:
+
+- `POST /v1/auth/login`, `GET /v1/auth/session`, `POST /v1/auth/logout`
+- `GET /v1/knowledge/context`
+- `GET|POST /v1/knowledge/notes`
+- `GET|PATCH|DELETE /v1/knowledge/notes/:ref`
+- `GET /v1/knowledge/notes/:ref/links`
+- `GET /v1/knowledge/notes/:ref/versions`
+- `GET /v1/users`, `POST /v1/users/invite`, `PATCH /v1/users/:id`
+
+Las rutas privadas también aceptan `Authorization: Bearer <token>` para clientes no navegador. El tenant siempre se obtiene de la identidad firmada, nunca de parámetros enviados por el frontend.
+
 Plantilla base para crear nuevos microservicios en el ecosistema MMS. Incluye toda la infraestructura común: configuración, base de datos, cache Redis, colas BullMQ, guards, interceptores, excepciones y logging.
 
 ---
