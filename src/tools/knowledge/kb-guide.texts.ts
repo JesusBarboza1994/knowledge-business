@@ -62,6 +62,7 @@ This is the most critical step. Ingesting is not just creating new notes:
 - If an existing note covers the same concept, **update it** with \`kb_update\` — merge the new information, add new sources, strengthen cross-references.
 - If the new document **contradicts** an existing note, do NOT silently overwrite. Add a \`> ⚠️ Contradiction\` callout explaining the discrepancy, and add a \`contradicts::[[OtherNote]]\` edge.
 - If the new document **extends** an existing note with deeper detail, update the existing note to reference the new detail note via \`extends::[[NewDetail]]\`.
+- When creating two or more mutually linked notes, prefer \`kb_create_batch\` (maximum 25 notes per chunk). It prevalidates the chunk and resolves links among its notes regardless of input order.
 - After all atomic notes are created/updated, review nearby notes (via \`kb_links\`) and add cross-references where new connections now exist.
 
 ## 6. Summary / Index note

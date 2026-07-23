@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common'
 import { McpTool, ToolDefinition } from '../tool.interface'
 import { UserProfile } from '../user-profile.type'
-import { KnowledgeService } from '@/modules/knowledge/services/knowledge.service'
+import { BatchCreateNoteData, KnowledgeService } from '@/modules/knowledge/services/knowledge.service'
 import { LinkDirection } from '@/commons/enums'
 import { NoteDocument } from '@/repository/schemas/note/note.schema'
 import { kbSearchSchema } from './schemas/kb-search.schema'
@@ -11,6 +11,7 @@ import { kbListSchema } from './schemas/kb-list.schema'
 import { kbCreateSchema } from './schemas/kb-create.schema'
 import { kbUpdateSchema } from './schemas/kb-update.schema'
 import { kbDeleteSchema } from './schemas/kb-delete.schema'
+import { kbCreateBatchSchema } from './schemas/kb-create-batch.schema'
 
 /** Compact confirmation for create/update — avoids echoing the full body back to the caller. */
 function toSummary(note: NoteDocument) {
@@ -88,6 +89,19 @@ export class KbTool implements McpTool {
           sensitivity?: string
           visible_to?: string[]
         }) => toSummary(await this.knowledgeService.create(data, user)),
+      },
+      {
+        name: 'kb_create_batch',
+        description:
+          'Create a prevalidated chunk of up to 25 notes. Resolves [[links]] between notes in the same chunk directly, regardless of input order, and also links to existing notes by slug or alias. Returns compact note summaries and connection counts.',
+        schema: kbCreateBatchSchema,
+        handler: async ({ notes }: { notes: BatchCreateNoteData[] }) => {
+          const result = await this.knowledgeService.createBatch(notes, user)
+          return {
+            created: result.created.map(toSummary),
+            connections: result.connections,
+          }
+        },
       },
       {
         name: 'kb_update',
