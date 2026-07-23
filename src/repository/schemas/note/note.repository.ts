@@ -23,6 +23,15 @@ export class NoteRepository {
     return this.model.create(data)
   }
 
+  async createMany(data: Array<Partial<Note> & { _id: Types.ObjectId }>): Promise<NoteDocument[]> {
+    const notes = await this.model.insertMany(data, { ordered: true })
+    return notes as NoteDocument[]
+  }
+
+  async deleteByIds(tenant: string, ids: Types.ObjectId[]): Promise<void> {
+    await this.model.deleteMany({ tenant, _id: { $in: ids } }).exec()
+  }
+
   async findBySlug(tenant: string, slug: string): Promise<NoteDocument | null> {
     return this.model.findOne({ tenant, slug, status: ContentStatus.ACTIVE }).exec()
   }
@@ -50,6 +59,10 @@ export class NoteRepository {
 
   async findBySlugOrAlias(tenant: string, ref: string): Promise<NoteDocument | null> {
     return this.model.findOne({ tenant, status: ContentStatus.ACTIVE, $or: [{ slug: ref }, { aliases: ref }] }).exec()
+  }
+
+  async findAnyBySlugOrAlias(tenant: string, ref: string): Promise<NoteDocument | null> {
+    return this.model.findOne({ tenant, $or: [{ slug: ref }, { aliases: ref }] }).exec()
   }
 
   /** Full-text search with permission pre-filter (design doc §3.1) */

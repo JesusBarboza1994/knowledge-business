@@ -1,4 +1,10 @@
-import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common'
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common'
 import { Types } from 'mongoose'
 import { NoteRepository } from '@/repository/schemas/note/note.repository'
 import { NoteVersionRepository } from '@/repository/schemas/note-version/note-version.repository'
@@ -51,6 +57,23 @@ export interface CreateNoteData {
   body: string
   sensitivity?: string
   visible_to?: string[]
+}
+
+export interface BatchCreateNoteData extends CreateNoteData {
+  slug?: string
+  aliases?: string[]
+  kind?: NoteKind
+}
+
+export interface BatchCreateResult {
+  created: NoteDocument[]
+  connections: {
+    resolved: number
+    within_batch: number
+    existing: number
+    unresolved: number
+    repaired_dangling: number
+  }
 }
 
 export interface UpdateNotePatch {
@@ -363,7 +386,15 @@ export class KnowledgeService {
     const areas = await this.resolveReadableAreas(user)
     const notes = await this.noteRepository.listDetailed(user.tenant, areas, area, limit)
     const visible = notes.filter((note) => this.permissionService.canView(user, note))
-    return Promise.all(visible.map(async (note) => this.toHttpNote(note, await this.redactBody(note, user))))
+    const targetIds = [
+      ...new Set(visible.flatMap((note) => (note.outlinks ?? []).map((outlink) => outlink.target_id.toString()))),
+    ]
+    const targets = targetIds.length ? await this.noteRepository.findByIds(user.tenant, targetIds) : []
+    const targetsById = new Map(targets.map((target) => [target._id.toString(), target]))
+
+    return Promise.all(
+      visible.map(async (note) => this.toHttpNote(note, await this.redactBody(note, user), user, targetsById)),
+    )
   }
 
   async versions(ref: string, user: UserProfile): Promise<Record<string, unknown>[]> {
@@ -411,19 +442,52 @@ export class KnowledgeService {
     }
   }
 
-  private toHttpNote(note: NoteDocument, body: string): Record<string, unknown> {
+  private toHttpNote(
+    note: NoteDocument,
+    body: string,
+    user: UserProfile,
+    targetsById: Map<string, NoteDocument>,
+  ): Record<string, unknown> {
     return {
       id: note._id.toString(),
       area: note.area,
       slug: note.slug,
       title: note.title,
       kind: note.kind,
+      aliases: note.aliases ?? [],
       body,
       sensitivity: note.sensitivity,
       visible_to: note.visible_to,
       version: note.version,
       updated_at: note.updated_at,
       updated_by: note.updated_by?.toString(),
+      outlinks: (note.outlinks ?? []).map((outlink) => {
+        const target = targetsById.get(outlink.target_id.toString())
+        if (!target) {
+          return {
+            display: outlink.display,
+            target_id: null,
+            target_slug: null,
+            access: 'missing',
+          }
+        }
+        if (!this.permissionService.canView(user, target)) {
+          return {
+            display: outlink.display,
+            target_id: null,
+            target_slug: null,
+            access: 'restricted',
+          }
+        }
+        return {
+          display: outlink.display,
+          target_id: target._id.toString(),
+          target_slug: target.slug,
+          target_title: target.title,
+          target_area: target.area,
+          access: 'accessible',
+        }
+      }),
       unresolved: note.unresolved,
     }
   }
@@ -440,6 +504,180 @@ export class KnowledgeService {
     const sensitivity = data.sensitivity ?? areaDoc?.default_sensitivity ?? Sensitivity.PUBLIC_ORG
 
     return this.insertNote({ ...data, sensitivity }, user)
+  }
+
+  async createBatch(data: BatchCreateNoteData[], user: UserProfile): Promise<BatchCreateResult> {
+    const areaKeys = [...new Set(data.map((note) => note.area))]
+    const areas = new Map<string, AreaDocument>()
+
+    for (const areaKey of areaKeys) {
+      const access = this.permissionService.accessTo(user, areaKey)
+      if (access !== AreaAccess.WRITE && access !== AreaAccess.MANAGE) {
+        throw new ForbiddenException(`Insufficient permissions to create notes in area "${areaKey}"`)
+      }
+      const area = await this.areaRepository.findByKey(user.tenant, areaKey)
+      if (!area) throw new NotFoundException(`Area not found: ${areaKey}`)
+      areas.set(areaKey, area)
+    }
+
+    const drafts = data.map((note) => {
+      const slug = normalizeSlug(note.slug ?? note.title)
+      if (!slug) throw new BadRequestException(`Cannot derive a slug for note "${note.title}"`)
+      const aliases = [...new Set((note.aliases ?? []).map(normalizeSlug).filter((alias) => alias && alias !== slug))]
+      return {
+        id: new Types.ObjectId(),
+        data: note,
+        slug,
+        aliases,
+        parsed: this.parserService.parse(note.body),
+        sensitivity: note.sensitivity ?? areas.get(note.area)?.default_sensitivity ?? Sensitivity.PUBLIC_ORG,
+      }
+    })
+
+    const draftByName = new Map<string, (typeof drafts)[number]>()
+    for (const draft of drafts) {
+      for (const name of [draft.slug, ...draft.aliases]) {
+        const owner = draftByName.get(name)
+        if (owner) {
+          throw new ConflictException(`Name "${name}" is shared by "${owner.data.title}" and "${draft.data.title}"`)
+        }
+        draftByName.set(name, draft)
+      }
+    }
+
+    const existingNames = await Promise.all(
+      [...draftByName.keys()].map(async (name) => ({
+        name,
+        note: await this.noteRepository.findAnyBySlugOrAlias(user.tenant, name),
+      })),
+    )
+    const collision = existingNames.find((entry) => entry.note)
+    if (collision) throw new ConflictException(`A note already uses slug or alias "${collision.name}"`)
+
+    const existingTargetIdByName = new Map<string, string>()
+    for (const draft of drafts) {
+      for (const link of draft.parsed.links) {
+        if (draftByName.has(link.name) || existingTargetIdByName.has(link.name)) continue
+        const targetId = this.nameIndexService.resolveSlug(user.tenant, link.name)
+        if (targetId) existingTargetIdByName.set(link.name, targetId)
+      }
+    }
+
+    const existingTargetIds = [...new Set(existingTargetIdByName.values())]
+    const existingTargets = existingTargetIds.length
+      ? await this.noteRepository.findByIds(user.tenant, existingTargetIds)
+      : []
+    const existingTargetById = new Map(existingTargets.map((note) => [note._id.toString(), note]))
+    let withinBatch = 0
+    let existing = 0
+    let unresolved = 0
+
+    const records = drafts.map((draft) => {
+      const outlinks: Outlink[] = []
+      const unresolvedLinks: { name: string; source_block: string }[] = []
+
+      for (const link of draft.parsed.links) {
+        const batchTarget = draftByName.get(link.name)
+        const existingTargetId = existingTargetIdByName.get(link.name)
+        const existingTarget = existingTargetId ? existingTargetById.get(existingTargetId) : undefined
+        const targetId = batchTarget?.id ?? existingTarget?._id
+        const targetSlug = batchTarget?.slug ?? existingTarget?.slug
+
+        if (targetId && targetSlug) {
+          outlinks.push({
+            target_id: targetId,
+            target_slug: targetSlug,
+            display: link.display,
+            source_heading: link.source_heading,
+            source_block: link.source_block,
+            target_anchor: link.anchor,
+            count: 1,
+          })
+          if (batchTarget) withinBatch += 1
+          else existing += 1
+        } else {
+          unresolvedLinks.push({ name: link.name, source_block: link.source_block })
+          unresolved += 1
+        }
+      }
+
+      return {
+        _id: draft.id,
+        tenant: user.tenant,
+        area: draft.data.area,
+        slug: draft.slug,
+        title: draft.data.title,
+        kind: draft.data.kind ?? NoteKind.NOTE,
+        aliases: draft.aliases,
+        body: draft.data.body,
+        sensitivity: draft.sensitivity,
+        visible_to: draft.data.visible_to ?? [],
+        headings: draft.parsed.headings,
+        blocks: draft.parsed.blocks,
+        outlinks,
+        unresolved: unresolvedLinks,
+        version: 1,
+        updated_by: new Types.ObjectId(user.id),
+        status: ContentStatus.ACTIVE,
+      }
+    })
+
+    let created: NoteDocument[]
+    try {
+      created = await this.noteRepository.createMany(records)
+      await this.noteVersionRepository.appendMany(
+        created.map((note) => ({
+          note_id: note._id,
+          tenant: user.tenant,
+          version: 1,
+          title: note.title,
+          body: note.body,
+          sensitivity: note.sensitivity,
+          visible_to: note.visible_to,
+          edited_by: new Types.ObjectId(user.id),
+        })),
+      )
+    } catch (error) {
+      const ids = drafts.map((draft) => draft.id)
+      await Promise.allSettled([
+        this.noteVersionRepository.deleteByNoteIds(ids),
+        this.noteRepository.deleteByIds(user.tenant, ids),
+      ])
+      throw error
+    }
+
+    let repairedDangling = 0
+    for (const draft of drafts) {
+      for (const name of [draft.slug, ...draft.aliases]) {
+        const danglingNotes = await this.noteRepository.findDanglings(user.tenant, name)
+        for (const dangling of danglingNotes) {
+          const unresolvedLink = dangling.unresolved.find((link) => link.name === name)
+          await this.noteRepository.resolveDangling(dangling._id.toString(), name, {
+            target_id: draft.id,
+            target_slug: draft.slug,
+            display: name,
+            source_heading: '',
+            source_block: unresolvedLink?.source_block ?? '',
+            target_anchor: null,
+            count: 1,
+          })
+          repairedDangling += 1
+        }
+      }
+    }
+
+    await this.nameIndexService.rebuild()
+
+    return {
+      created,
+      connections: {
+        resolved: withinBatch + existing,
+        within_batch: withinBatch,
+        existing,
+        unresolved,
+        repaired_dangling: repairedDangling,
+      },
+    }
   }
 
   /**

@@ -18,6 +18,15 @@ export class NoteVersionRepository {
     )
   }
 
+  async appendMany(data: Partial<NoteVersion>[]): Promise<void> {
+    if (!data.length) return
+    await this.model.insertMany(data, { ordered: true })
+  }
+
+  async deleteByNoteIds(noteIds: Types.ObjectId[]): Promise<void> {
+    await this.model.deleteMany({ note_id: { $in: noteIds } }).exec()
+  }
+
   async findByNoteId(noteId: string): Promise<NoteVersionDocument[]> {
     return this.model
       .find({ note_id: new Types.ObjectId(noteId) })
