@@ -26,8 +26,7 @@ export class KbPrompt implements McpPrompt {
       },
       {
         name: 'kb_query',
-        description:
-          'Index-first strategy for answering a question from the compiled Knowledge Hub wiki.',
+        description: 'Index-first strategy for answering a question from the compiled Knowledge Hub wiki.',
         argsSchema: { question: z.string().describe('The question to answer') },
         handler: async ({ question }) => ({
           messages: [

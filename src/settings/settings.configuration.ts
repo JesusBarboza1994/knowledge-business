@@ -15,4 +15,9 @@ export default () => ({
     secret: process.env.AUTH_TOKEN_SECRET,
     tokenTtl: Number(process.env.AUTH_TOKEN_TTL ?? String(86400 * 30)),
   },
+  http: {
+    allowedOrigins: process.env.FRONTEND_URLS || process.env.FRONTEND_URL || 'http://localhost:5173',
+    cookieSecure: process.env.COOKIE_SECURE === 'true' || process.env.NODE_ENV === 'production',
+    cookieSameSite: process.env.COOKIE_SAME_SITE ?? (process.env.NODE_ENV === 'production' ? 'none' : 'lax'),
+  },
 })

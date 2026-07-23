@@ -49,9 +49,7 @@ export class NoteRepository {
   }
 
   async findBySlugOrAlias(tenant: string, ref: string): Promise<NoteDocument | null> {
-    return this.model
-      .findOne({ tenant, status: ContentStatus.ACTIVE, $or: [{ slug: ref }, { aliases: ref }] })
-      .exec()
+    return this.model.findOne({ tenant, status: ContentStatus.ACTIVE, $or: [{ slug: ref }, { aliases: ref }] }).exec()
   }
 
   /** Full-text search with permission pre-filter (design doc §3.1) */
@@ -91,15 +89,42 @@ export class NoteRepository {
     return this.model.find(filter).limit(limit).select('tenant area slug title sensitivity version updated_at').exec()
   }
 
+  /** Full note records for the authenticated HTTP workspace. Permission redaction is applied in the service. */
+  async listDetailed(tenant: string, areas: string[], area?: string, limit = 200): Promise<NoteDocument[]> {
+    const filter: FilterQuery<Note> = {
+      tenant,
+      status: ContentStatus.ACTIVE,
+      $or: [
+        { area: { $in: areas } },
+        { sensitivity: Sensitivity.PUBLIC_ORG },
+        { sensitivity: Sensitivity.INTERNAL_AREA, visible_to: { $in: areas } },
+      ],
+    }
+    if (area) filter.area = area
+    return this.model.find(filter).sort({ updated_at: -1 }).limit(limit).exec()
+  }
+
   async update(tenant: string, id: string, data: Partial<Note>): Promise<NoteDocument | null> {
-    return this.model
-      .findOneAndUpdate({ tenant, _id: new Types.ObjectId(id) }, { $set: data }, { new: true })
-      .exec()
+    return this.model.findOneAndUpdate({ tenant, _id: new Types.ObjectId(id) }, { $set: data }, { new: true }).exec()
   }
 
   async softDelete(tenant: string, id: string): Promise<NoteDocument | null> {
     return this.model
-      .findOneAndUpdate({ tenant, _id: new Types.ObjectId(id) }, { $set: { status: ContentStatus.ARCHIVED } }, { new: true })
+      .findOneAndUpdate(
+        { tenant, _id: new Types.ObjectId(id) },
+        { $set: { status: ContentStatus.ARCHIVED } },
+        { new: true },
+      )
+      .exec()
+  }
+
+  async findBacklinks(tenant: string, targetId: string): Promise<NoteDocument[]> {
+    return this.model
+      .find({
+        tenant,
+        status: ContentStatus.ACTIVE,
+        'outlinks.target_id': new Types.ObjectId(targetId),
+      })
       .exec()
   }
 

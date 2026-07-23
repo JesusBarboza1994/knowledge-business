@@ -8,6 +8,7 @@ export interface Membership {
 export interface UserProfile {
   id: string
   email: string
+  name?: string
   tenant: string
   memberships: Membership[]
   role: UserRole

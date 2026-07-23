@@ -29,6 +29,9 @@ export class User {
   @Prop({ required: true, trim: true, lowercase: true })
   email: string
 
+  @Prop({ trim: true })
+  name?: string
+
   @Prop({ type: [UserMembershipSchema], default: [] })
   memberships: UserMembership[]
 

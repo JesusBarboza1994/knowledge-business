@@ -109,7 +109,8 @@ export class KbTool implements McpTool {
       },
       {
         name: 'kb_delete',
-        description: 'Soft-delete a note. Provide base_version for optimistic locking.',
+        description:
+          'Soft-delete a note and convert inbound wikilinks to plain text. Requires manage access and base_version for optimistic locking.',
         schema: kbDeleteSchema,
         handler: async ({ id, base_version }: { id: string; base_version: number }) =>
           this.knowledgeService.delete(id, base_version, user),

@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common'
+import { APP_GUARD } from '@nestjs/core'
 import { LoggerModule } from './providers/logger/logger.module'
 import { SettingsModule } from './settings/settings.module'
 import { HealthModule } from '@/modules/health/health.module'
@@ -12,6 +13,7 @@ import { AreasModule } from '@/modules/areas/areas.module'
 import { UsersModule } from '@/modules/users/users.module'
 import { ToolsModule } from '@/tools/tools.module'
 import { McpModule } from '@/modules/mcp/mcp.module'
+import { SessionAuthGuard } from '@/commons/guards/session-auth.guard'
 
 @Module({
   imports: [
@@ -30,6 +32,6 @@ import { McpModule } from '@/modules/mcp/mcp.module'
     McpModule,
   ],
   controllers: [],
-  providers: [],
+  providers: [{ provide: APP_GUARD, useClass: SessionAuthGuard }],
 })
 export class AppModule {}

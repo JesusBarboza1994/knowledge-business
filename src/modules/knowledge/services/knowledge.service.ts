@@ -10,6 +10,8 @@ import { PermissionService } from './permission.service'
 import { ParserService } from './parser.service'
 import { NameIndexService, Edge } from './name-index.service'
 import { Note, NoteDocument, Outlink } from '@/repository/schemas/note/note.schema'
+import { OrganizationRepository } from '@/repository/schemas/organization/organization.repository'
+import { unlinkWikiReferences } from './wikilink-cleaner'
 
 function normalizeSlug(title: string): string {
   return title
@@ -76,6 +78,7 @@ export class KnowledgeService {
     private readonly permissionService: PermissionService,
     private readonly parserService: ParserService,
     private readonly nameIndexService: NameIndexService,
+    private readonly organizationRepository: OrganizationRepository,
   ) {}
 
   // ─── READ ────────────────────────────────────────────────────────────────
@@ -356,6 +359,75 @@ export class KnowledgeService {
     return this.noteRepository.list(user.tenant, areas, undefined, limit)
   }
 
+  async listDetailed(user: UserProfile, area?: string, limit = 200): Promise<Record<string, unknown>[]> {
+    const areas = await this.resolveReadableAreas(user)
+    const notes = await this.noteRepository.listDetailed(user.tenant, areas, area, limit)
+    const visible = notes.filter((note) => this.permissionService.canView(user, note))
+    return Promise.all(visible.map(async (note) => this.toHttpNote(note, await this.redactBody(note, user))))
+  }
+
+  async versions(ref: string, user: UserProfile): Promise<Record<string, unknown>[]> {
+    const note = await this.get(ref, user)
+    const versions = await this.noteVersionRepository.findByNoteId(note._id.toString())
+    const uniqueVersions = versions.filter(
+      (version, index) => versions.findIndex((candidate) => candidate.version === version.version) === index,
+    )
+    return uniqueVersions.map((version) => ({
+      version: version.version,
+      title: version.title,
+      body: version.body,
+      sensitivity: version.sensitivity,
+      visible_to: version.visible_to,
+      edited_at: version.edited_at,
+      edited_by: version.edited_by?.toString(),
+    }))
+  }
+
+  async getWorkspaceContext(user: UserProfile): Promise<{
+    organization: { slug: string; name: string }
+    user: { id: string; email: string; name?: string; role: string; tenant: string }
+    areas: {
+      key: string
+      name: string
+      description?: string
+      access: string
+      default_sensitivity?: string
+      note_count: number
+    }[]
+  }> {
+    const context = await this.getMyContext(user)
+    const organization = await this.organizationRepository.findBySlug(user.tenant)
+    return {
+      organization: { slug: user.tenant, name: organization?.name ?? user.tenant },
+      user: { id: user.id, email: user.email, name: user.name, role: user.role, tenant: user.tenant },
+      areas: context.areas.map((area) => ({
+        key: area.key,
+        name: area.name,
+        description: area.description,
+        access: area.can_manage ? AreaAccess.MANAGE : area.can_write ? AreaAccess.WRITE : AreaAccess.READ,
+        default_sensitivity: area.default_sensitivity,
+        note_count: context.note_counts[area.key] ?? 0,
+      })),
+    }
+  }
+
+  private toHttpNote(note: NoteDocument, body: string): Record<string, unknown> {
+    return {
+      id: note._id.toString(),
+      area: note.area,
+      slug: note.slug,
+      title: note.title,
+      kind: note.kind,
+      body,
+      sensitivity: note.sensitivity,
+      visible_to: note.visible_to,
+      version: note.version,
+      updated_at: note.updated_at,
+      updated_by: note.updated_by?.toString(),
+      unresolved: note.unresolved,
+    }
+  }
+
   // ─── WRITE ───────────────────────────────────────────────────────────────
 
   async create(data: CreateNoteData, user: UserProfile): Promise<NoteDocument> {
@@ -468,17 +540,6 @@ export class KnowledgeService {
     if (!this.permissionService.canEdit(user, note)) throw new ForbiddenException()
     if (note.version !== baseVersion) throw new ConflictException('Version conflict — reload and retry')
 
-    await this.noteVersionRepository.append({
-      note_id: note._id,
-      tenant: user.tenant,
-      version: note.version,
-      title: note.title,
-      body: note.body,
-      sensitivity: note.sensitivity,
-      visible_to: note.visible_to,
-      edited_by: new Types.ObjectId(user.id),
-    })
-
     const updateData: Partial<Note> = {
       ...patch,
       version: note.version + 1,
@@ -514,6 +575,17 @@ export class KnowledgeService {
 
     const updated = await this.noteRepository.update(user.tenant, id, updateData)
     if (!updated) throw new NotFoundException()
+
+    await this.noteVersionRepository.append({
+      note_id: updated._id,
+      tenant: user.tenant,
+      version: updated.version,
+      title: updated.title,
+      body: updated.body,
+      sensitivity: updated.sensitivity,
+      visible_to: updated.visible_to,
+      edited_by: new Types.ObjectId(user.id),
+    })
 
     const edges: Edge[] = (updated.outlinks ?? []).map((o) => ({
       target_id: o.target_id,
@@ -584,14 +656,45 @@ export class KnowledgeService {
     }
   }
 
-  async delete(id: string, baseVersion: number, user: UserProfile): Promise<void> {
+  async delete(
+    id: string,
+    baseVersion: number,
+    user: UserProfile,
+  ): Promise<{ archived: true; broken_connections: number; updated_notes: number }> {
     const note = await this.noteRepository.findById(user.tenant, id)
     if (!note) throw new NotFoundException()
-    if (!this.permissionService.canEdit(user, note)) throw new ForbiddenException()
+    if (!this.permissionService.canManage(user, note.area)) {
+      throw new ForbiddenException('Manage access is required to delete notes')
+    }
+    if (note.kind !== NoteKind.NOTE) throw new ForbiddenException('System notes cannot be deleted')
     if (note.version !== baseVersion) throw new ConflictException('Version conflict')
 
+    const backlinks = (await this.noteRepository.findBacklinks(user.tenant, id)).filter(
+      (source) => source._id.toString() !== id,
+    )
+    const unauthorized = backlinks.find((source) => !this.permissionService.canEdit(user, source))
+    if (unauthorized) {
+      throw new ForbiddenException(`Cannot break a reference from area "${unauthorized.area}" without write access`)
+    }
+
+    const references = [note.slug, note.title, ...(note.aliases ?? [])]
+    let brokenInbound = 0
+    let updatedNotes = 0
+    for (const source of backlinks) {
+      const unlinked = unlinkWikiReferences(source.body, references)
+      if (unlinked.removedLinks === 0) continue
+      await this.update(source._id.toString(), { body: unlinked.body }, source.version, user)
+      brokenInbound += unlinked.removedLinks
+      updatedNotes += 1
+    }
+
+    const brokenOutbound = (note.outlinks?.length ?? 0) + (note.unresolved?.length ?? 0)
     await this.noteRepository.softDelete(user.tenant, id)
-    await this.noteRepository.unresolveOutlinks(user.tenant, id)
     this.nameIndexService.removeNote(user.tenant, id, note.slug, note.aliases ?? [])
+    return {
+      archived: true,
+      broken_connections: brokenInbound + brokenOutbound,
+      updated_notes: updatedNotes,
+    }
   }
 }

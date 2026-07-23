@@ -43,6 +43,7 @@ export enum ContentStatus {
 
 export enum UserStatus {
   ACTIVE = 'active',
+  INVITED = 'invited',
   INACTIVE = 'inactive',
 }
 

@@ -22,6 +22,12 @@ export class OrganizationsService {
     return org
   }
 
+  async findBySlug(slug: string) {
+    const org = await this.organizationRepository.findBySlug(slug)
+    if (!org) throw new NotFoundException('Organization not found')
+    return org
+  }
+
   async update(id: string, dto: Partial<CreateOrganizationDto>) {
     const org = await this.organizationRepository.update(id, dto)
     if (!org) throw new NotFoundException(`Organization not found`)

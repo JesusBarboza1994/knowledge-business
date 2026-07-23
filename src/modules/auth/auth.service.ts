@@ -20,10 +20,11 @@ export class AuthService {
 
     const valid = await this.passwordService.verify(password, user.password_hash)
     if (!valid) throw new UnauthorizedException('Invalid credentials')
-    
+
     return this.tokenService.generateToken({
       id: user._id.toString(),
       email: user.email,
+      name: user.name,
       tenant: user.tenant,
       memberships: (user.memberships ?? []).map((m) => ({ area: m.area, access: m.access as AreaAccess })),
       role: user.role as UserRole,

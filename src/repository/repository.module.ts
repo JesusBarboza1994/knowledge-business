@@ -21,19 +21,7 @@ import { NoteVersionRepository } from './schemas/note-version/note-version.repos
       { name: NoteVersion.name, schema: NoteVersionSchema },
     ]),
   ],
-  providers: [
-    OrganizationRepository,
-    AreaRepository,
-    UserRepository,
-    NoteRepository,
-    NoteVersionRepository,
-  ],
-  exports: [
-    OrganizationRepository,
-    AreaRepository,
-    UserRepository,
-    NoteRepository,
-    NoteVersionRepository,
-  ],
+  providers: [OrganizationRepository, AreaRepository, UserRepository, NoteRepository, NoteVersionRepository],
+  exports: [OrganizationRepository, AreaRepository, UserRepository, NoteRepository, NoteVersionRepository],
 })
 export class RepositoryModule {}

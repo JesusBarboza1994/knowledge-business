@@ -20,7 +20,11 @@ export async function App() {
   setupMcpEndpoint(app, issuerUrl)
 
   app.setGlobalPrefix('v1')
-  app.enableCors()
+  const allowedOrigins = (process.env.FRONTEND_URLS || process.env.FRONTEND_URL || 'http://localhost:5173')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean)
+  app.enableCors({ origin: allowedOrigins, credentials: true })
   app.useGlobalInterceptors(new ResponseInterceptor(app.get(Reflector)))
   app.useGlobalPipes(new ZodValidationPipe())
   app.enableShutdownHooks()
