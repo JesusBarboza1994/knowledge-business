@@ -7,6 +7,7 @@ import { knowledgeOAuthProvider } from '@/providers/oauth/oauth.provider'
 import { McpToolsController } from '@/tools'
 import { Membership, UserProfile } from '@/tools/user-profile.type'
 import { UserRole } from '@/commons/enums'
+import { createMcpServerInfo } from './mcp.identity'
 
 /**
  * Mounts POST /mcp at the Express level (outside the `v1` prefix — MCP clients
@@ -22,6 +23,7 @@ import { UserRole } from '@/commons/enums'
 export function setupMcpEndpoint(app: INestApplication, issuerUrl: URL): void {
   const mcpTools = app.get(McpToolsController)
   const expressApp = app.getHttpAdapter().getInstance() as Express
+  const serverInfo = createMcpServerInfo()
 
   const bearerAuth = requireBearerAuth({
     verifier: knowledgeOAuthProvider,
@@ -40,7 +42,7 @@ export function setupMcpEndpoint(app: INestApplication, issuerUrl: URL): void {
     }
     console.log('[MCP] POST /mcp from:', userProfile.email, '| tenant:', userProfile.tenant)
 
-    const server = new McpServer({ name: 'knowledge-hub', version: '1.0.0' })
+    const server = new McpServer(serverInfo)
     mcpTools.register(server, userProfile)
 
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined })

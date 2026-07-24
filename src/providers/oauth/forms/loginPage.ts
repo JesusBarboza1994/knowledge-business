@@ -1,6 +1,9 @@
 import { PAGE_STYLES } from './pageStyles'
+import { getBrandLogoUrl } from '@/branding/brand'
 
-export function renderLoginForm(nonce: string, error?: string): string {
+export function renderLoginForm(nonce: string, error?: string, brandLogoUrl = process.env.BRAND_LOGO_URL): string {
+  const logoUrl = getBrandLogoUrl(brandLogoUrl)
+
   return `<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -11,7 +14,10 @@ export function renderLoginForm(nonce: string, error?: string): string {
 </head>
 <body>
   <div class="card">
-    <div class="logo">Knowledge Hub</div>
+    <div class="brand">
+      ${logoUrl ? `<img class="brand-icon" src="${logoUrl}" alt="" width="56" height="56" />` : ''}
+      <div class="logo">Knowledge Hub</div>
+    </div>
     <div class="subtitle">Inicia sesion para conectar tu cliente MCP.</div>
     ${error ? `<div class="error">${error}</div>` : ''}
     <form method="POST" action="/oauth/login">

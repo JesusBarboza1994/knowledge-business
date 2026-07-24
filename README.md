@@ -10,6 +10,7 @@ El frontend usa sesiones firmadas en cookie `httpOnly`. Configuración mínima:
 MONGO_URI=mongodb://localhost:27017/knowledge-business
 AUTH_TOKEN_SECRET=replace-with-a-long-random-secret
 FRONTEND_URL=http://localhost:5173
+BRAND_LOGO_URL=http://localhost:5173/knowvault-icon.png
 COOKIE_SECURE=false
 COOKIE_SAME_SITE=lax
 ```
