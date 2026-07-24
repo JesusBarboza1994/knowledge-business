@@ -5,6 +5,7 @@ import { AppModule } from './app.module'
 import { ResponseInterceptor } from './commons/serializers/response.serializer'
 import { setupOAuth } from './providers/oauth/oauth.setup'
 import { setupMcpEndpoint } from './modules/mcp/mcp.setup'
+import { setupBranding } from './branding/branding.setup'
 
 export async function App() {
   const app = await NestFactory.create(AppModule)
@@ -16,6 +17,7 @@ export async function App() {
   // OAuth discovery/flow + MCP endpoint live at the Express level, outside the
   // v1 prefix — MCP clients expect them at the URLs advertised in the metadata.
   const issuerUrl = new URL(process.env.PUBLIC_URL ?? `http://localhost:${process.env.PORT ?? 3000}`)
+  setupBranding(app)
   setupOAuth(app, issuerUrl)
   setupMcpEndpoint(app, issuerUrl)
 
