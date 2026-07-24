@@ -26,13 +26,19 @@ export class UsersController {
   @Post('invite')
   invite(@Body() dto: InviteUserDto, @CurrentUser() user: UserProfile) {
     this.assertTenantAdmin(user)
+    if (dto.role === UserRole.SUPERADMIN && user.role !== UserRole.SUPERADMIN) {
+      throw new ForbiddenException('Only a superadmin can grant the superadmin role')
+    }
     return this.usersService.invite(user.tenant, dto, user.email)
   }
 
   @Patch(':id')
   updateAccess(@Param('id') id: string, @Body() dto: UpdateUserAccessDto, @CurrentUser() user: UserProfile) {
     this.assertTenantAdmin(user)
-    return this.usersService.updateAccess(user.tenant, id, dto, user.email)
+    if (dto.role === UserRole.SUPERADMIN && user.role !== UserRole.SUPERADMIN) {
+      throw new ForbiddenException('Only a superadmin can grant the superadmin role')
+    }
+    return this.usersService.updateAccess(user.tenant, id, dto, user.email, { id: user.id, role: user.role })
   }
 
   @Patch(':email/password')

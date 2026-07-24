@@ -1,9 +1,9 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common'
+import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common'
 import { UserRepository } from '@/repository/schemas/user/user.repository'
 import { PasswordService } from '@/providers/password/password.service'
 import { CreateUserDto } from './dto/create-user.dto'
 import { InviteUserDto, UpdateUserAccessDto } from './dto/invite-user.dto'
-import { UserStatus } from '@/commons/enums'
+import { UserRole, UserStatus } from '@/commons/enums'
 import { User } from '@/repository/schemas/user/user.schema'
 
 @Injectable()
@@ -58,9 +58,28 @@ export class UsersService {
     })
   }
 
-  async updateAccess(tenant: string, id: string, dto: UpdateUserAccessDto, grantedBy: string) {
+  async updateAccess(
+    tenant: string,
+    id: string,
+    dto: UpdateUserAccessDto,
+    grantedBy: string,
+    actor: { id: string; role: UserRole },
+  ) {
     const existing = await this.userRepository.findById(tenant, id)
     if (!existing) throw new NotFoundException('User not found')
+    if (actor.role !== UserRole.SUPERADMIN && existing.role === UserRole.SUPERADMIN) {
+      throw new ForbiddenException('Only a superadmin can modify another superadmin')
+    }
+    if (actor.role !== UserRole.SUPERADMIN && dto.role === UserRole.SUPERADMIN) {
+      throw new ForbiddenException('Only a superadmin can grant the superadmin role')
+    }
+    const changesOwnAuthority =
+      actor.id === id &&
+      ((dto.role !== undefined && dto.role !== existing.role) ||
+        (dto.status !== undefined && dto.status !== existing.status))
+    if (changesOwnAuthority) {
+      throw new ForbiddenException('You cannot change your own role or status')
+    }
     const { memberships, ...rest } = dto
     const data: Partial<User> = {
       ...rest,
