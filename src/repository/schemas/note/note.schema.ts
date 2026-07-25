@@ -89,6 +89,7 @@ export class Note {
 export const NoteSchema = SchemaFactory.createForClass(Note)
 
 NoteSchema.index({ tenant: 1, slug: 1 }, { unique: true })
+NoteSchema.index({ tenant: 1, status: 1, updated_at: -1 })
 NoteSchema.index({ tenant: 1, aliases: 1 })
 NoteSchema.index({ tenant: 1, area: 1, sensitivity: 1 })
 NoteSchema.index({ tenant: 1, area: 1, kind: 1 })

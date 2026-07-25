@@ -22,12 +22,16 @@ export class KnowledgeController {
 
   @Get('notes')
   notes(@CurrentUser() user: UserProfile, @Query() query: ListNotesQueryDto) {
-    return this.knowledgeService.listDetailed(user, query.area, query.limit)
+    return this.knowledgeService.listDetailed(user, {
+      area: query.area,
+      limit: query.limit,
+      includeBody: query.include.includes('body'),
+    })
   }
 
   @Get('search')
   search(@CurrentUser() user: UserProfile, @Query() query: SearchNotesQueryDto) {
-    return this.knowledgeService.search(query.q, user, query.limit)
+    return this.knowledgeService.search(query.q, user, query.limit, query.area)
   }
 
   @Get('notes/:ref/links')
@@ -46,14 +50,16 @@ export class KnowledgeController {
   }
 
   @Post('notes')
-  create(@Body() dto: CreateNoteHttpDto, @CurrentUser() user: UserProfile) {
-    return this.knowledgeService.create(dto, user)
+  async create(@Body() dto: CreateNoteHttpDto, @CurrentUser() user: UserProfile) {
+    const note = await this.knowledgeService.create(dto, user)
+    return this.knowledgeService.getRedacted(note.slug, user, { mode: 'full' })
   }
 
   @Patch('notes/:id')
-  update(@Param('id') id: string, @Body() dto: UpdateNoteHttpDto, @CurrentUser() user: UserProfile) {
+  async update(@Param('id') id: string, @Body() dto: UpdateNoteHttpDto, @CurrentUser() user: UserProfile) {
     const { base_version, ...patch } = dto
-    return this.knowledgeService.update(id, patch, base_version, user)
+    const note = await this.knowledgeService.update(id, patch, base_version, user)
+    return this.knowledgeService.getRedacted(note.slug, user, { mode: 'full' })
   }
 
   @Delete('notes/:id')

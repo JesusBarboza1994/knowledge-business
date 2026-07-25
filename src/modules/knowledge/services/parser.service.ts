@@ -44,6 +44,7 @@ export class ParserService {
         const id = `h_${text.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
         headings.push({ id, text, level })
         currentHeading = text
+        links.push(...this.linksIn(text, text, id))
         continue
       }
 
@@ -52,26 +53,27 @@ export class ParserService {
 
       const blockId = `b_${String(blockIndex++).padStart(2, '0')}`
       blocks.push({ id: blockId, text: trimmed })
-
-      const linkRegex = /\[\[([^\]]+)\]\]/g
-      let match: RegExpExecArray | null
-      while ((match = linkRegex.exec(trimmed)) !== null) {
-        const raw = match[1]
-        const [namePart, anchor] = raw.split('#')
-        links.push({
-          display: raw,
-          name: namePart
-            .trim()
-            .toLowerCase()
-            .replace(/[^a-z0-9áéíóúüñ]+/g, '-')
-            .replace(/^-+|-+$/g, ''),
-          anchor: anchor?.trim() ?? null,
-          source_heading: currentHeading,
-          source_block: blockId,
-        })
-      }
+      links.push(...this.linksIn(trimmed, currentHeading, blockId))
     }
 
     return { headings, blocks, links }
+  }
+
+  private linksIn(text: string, sourceHeading: string, sourceBlock: string): ParsedLink[] {
+    return [...text.matchAll(/\[\[([^\]]+)\]\]/g)].map((match) => {
+      const raw = match[1]
+      const [namePart, anchor] = raw.split('#')
+      return {
+        display: raw,
+        name: namePart
+          .trim()
+          .toLowerCase()
+          .replace(/[^a-z0-9áéíóúüñ]+/g, '-')
+          .replace(/^-+|-+$/g, ''),
+        anchor: anchor?.trim() ?? null,
+        source_heading: sourceHeading,
+        source_block: sourceBlock,
+      }
+    })
   }
 }

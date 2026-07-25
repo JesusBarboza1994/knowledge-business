@@ -5,13 +5,18 @@ import { LinkDirection, Sensitivity } from '@/commons/enums'
 export class ListNotesQueryDto extends createZodDto(
   z.object({
     area: z.string().optional(),
-    limit: z.coerce.number().int().min(1).max(500).default(200),
+    limit: z.coerce.number().int().min(1).max(20_000).default(5_000),
+    include: z
+      .string()
+      .optional()
+      .transform((value) => (value ?? '').split(',').map((part) => part.trim())),
   }),
 ) {}
 
 export class SearchNotesQueryDto extends createZodDto(
   z.object({
     q: z.string().min(1).max(200),
+    area: z.string().optional(),
     limit: z.coerce.number().int().min(1).max(50).default(20),
   }),
 ) {}

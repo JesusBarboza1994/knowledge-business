@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common'
 import { Types } from 'mongoose'
-import { NoteRepository } from '@/repository/schemas/note/note.repository'
+import { NOTE_REFERENCE_FIELDS, NoteRepository } from '@/repository/schemas/note/note.repository'
 import { NoteVersionRepository } from '@/repository/schemas/note-version/note-version.repository'
 import { AreaRepository } from '@/repository/schemas/area/area.repository'
 import { AreaDocument } from '@/repository/schemas/area/area.schema'
@@ -17,7 +17,6 @@ import { ParserService } from './parser.service'
 import { NameIndexService, Edge } from './name-index.service'
 import { Note, NoteDocument, Outlink } from '@/repository/schemas/note/note.schema'
 import { OrganizationRepository } from '@/repository/schemas/organization/organization.repository'
-import { unlinkWikiReferences } from './wikilink-cleaner'
 
 function normalizeSlug(title: string): string {
   return title
@@ -89,8 +88,23 @@ export interface GetNoteOptions {
   max_chars?: number
 }
 
+export interface ListNotesOptions {
+  area?: string
+  limit?: number
+  includeBody?: boolean
+}
+
+export interface ListNotesResult {
+  items: Record<string, unknown>[]
+  total: number
+  limit: number
+  truncated: boolean
+}
+
 const DEFAULT_PREVIEW_CHARS = 1800
 const MAX_PREVIEW_CHARS = 6000
+const WIKILINK = /\[\[([^\]]+)\]\]/g
+const RESTRICTED_MARKER = '🔒 *[restricted]*'
 
 @Injectable()
 export class KnowledgeService {
@@ -115,9 +129,9 @@ export class KnowledgeService {
     return readableAreas(user)
   }
 
-  async search(query: string, user: UserProfile, limit = 10): Promise<NoteDocument[]> {
+  async search(query: string, user: UserProfile, limit = 10, area?: string): Promise<NoteDocument[]> {
     const areas = await this.resolveReadableAreas(user)
-    return this.noteRepository.search({ tenant: user.tenant, areas, query, limit })
+    return this.noteRepository.search({ tenant: user.tenant, areas, query, limit, area })
   }
 
   /**
@@ -214,14 +228,27 @@ export class KnowledgeService {
     }
   }
 
-  /** Note served for display: body has links to unauthorized targets redacted. */
+  /**
+   * Note served for display: links to unauthorized targets are redacted in the body and
+   * reported as `restricted` in the outlinks, matching the shape of the workspace listing.
+   */
   async getRedacted(ref: string, user: UserProfile, options: GetNoteOptions = {}): Promise<Record<string, unknown>> {
     const note = await this.get(ref, user)
-    const body = await this.redactBody(note, user)
+
+    const idByName = this.resolveLinkTargets(note.body, user.tenant)
+    const referenceIds = [
+      ...new Set([...(note.outlinks ?? []).map((outlink) => outlink.target_id.toString()), ...idByName.values()]),
+    ]
+    const references = referenceIds.length
+      ? await this.noteRepository.findByIds(user.tenant, referenceIds, NOTE_REFERENCE_FIELDS)
+      : []
+    const referencesById = new Map(references.map((reference) => [reference._id.toString(), reference]))
+
+    const body = this.redactBodyWith(note.body, idByName, this.deniedIds(references, user))
     const selected = options.heading ? this.extractHeadingSection(body, options.heading) : body
     if (selected === null) throw new NotFoundException(`Heading not found: ${options.heading}`)
 
-    return this.serializeNote(note, selected, options, body.length)
+    return this.serializeNote(note, selected, options, body.length, user, referencesById)
   }
 
   private serializeNote(
@@ -229,10 +256,18 @@ export class KnowledgeService {
     selectedBody: string,
     options: GetNoteOptions,
     fullBodyLength: number,
+    user: UserProfile,
+    referencesById: Map<string, NoteDocument>,
   ): Record<string, unknown> {
     const raw = note.toObject() as unknown as Record<string, unknown>
-    const { body: _body, blocks, updated_by: _updatedBy, __v: _versionKey, ...metadata } = raw
+    const { body: _body, blocks, __v: _versionKey, ...rest } = raw
     const mode = options.mode ?? 'preview'
+    const metadata = {
+      ...rest,
+      id: note._id.toString(),
+      updated_by: note.updated_by?.toString(),
+      outlinks: this.outlinksFor(note, user, referencesById),
+    }
 
     if (mode === 'full') {
       return {
@@ -310,36 +345,48 @@ export class KnowledgeService {
       .replace(/^-+|-+$/g, '')
   }
 
+  /** Resolves every [[wikilink]] name in a body to its target id, skipping dangling ones. */
+  private resolveLinkTargets(body: string, tenant: string, into = new Map<string, string>()): Map<string, string> {
+    for (const match of body.matchAll(WIKILINK)) {
+      const name = normalizeSlug(match[1].split('#')[0])
+      if (into.has(name)) continue
+      const id = this.nameIndexService.resolveSlug(tenant, name)
+      if (id) into.set(name, id)
+    }
+    return into
+  }
+
   /**
-   * Replaces [[wikilinks]] whose target the reader cannot view with a restricted
-   * marker. Applied only to the served copy — the stored body is never modified.
+   * Replaces [[wikilinks]] whose target the reader cannot view with a restricted marker.
+   * Pure — the caller supplies the resolved targets, so a listing can redact many bodies
+   * from a single lookup. Applied only to the served copy; the stored body is never modified.
    * Dangling links (target does not exist yet) are left untouched.
    */
-  private async redactBody(note: NoteDocument, user: UserProfile): Promise<string> {
-    const wikilink = /\[\[([^\]]+)\]\]/g
-    const matches = [...note.body.matchAll(wikilink)]
-    if (matches.length === 0) return note.body
-
-    // Resolve each unique link name to a note id via the in-memory name index
-    const idByName = new Map<string, string | undefined>()
-    for (const m of matches) {
-      const name = normalizeSlug(m[1].split('#')[0])
-      if (!idByName.has(name)) {
-        idByName.set(name, this.nameIndexService.resolveSlug(user.tenant, name) ?? undefined)
-      }
-    }
-
-    const ids = [...new Set([...idByName.values()].filter((id): id is string => Boolean(id)))]
-    if (ids.length === 0) return note.body
-
-    const targets = await this.noteRepository.findByIds(user.tenant, ids)
-    const denied = new Set(targets.filter((t) => !this.permissionService.canView(user, t)).map((t) => t._id.toString()))
-    if (denied.size === 0) return note.body
-
-    return note.body.replace(wikilink, (full, inner: string) => {
+  private redactBodyWith(body: string, idByName: Map<string, string>, denied: Set<string>): string {
+    if (denied.size === 0) return body
+    return body.replace(WIKILINK, (full, inner: string) => {
       const id = idByName.get(normalizeSlug(inner.split('#')[0]))
-      return id && denied.has(id) ? '🔒 *[restricted]*' : full
+      return id && denied.has(id) ? RESTRICTED_MARKER : full
     })
+  }
+
+  /** Single-note redaction: one lookup for this note's link targets. */
+  private async redactBody(note: NoteDocument, user: UserProfile): Promise<string> {
+    const idByName = this.resolveLinkTargets(note.body, user.tenant)
+    if (idByName.size === 0) return note.body
+
+    const targets = await this.noteRepository.findByIds(
+      user.tenant,
+      [...new Set(idByName.values())],
+      NOTE_REFERENCE_FIELDS,
+    )
+    return this.redactBodyWith(note.body, idByName, this.deniedIds(targets, user))
+  }
+
+  private deniedIds(notes: NoteDocument[], user: UserProfile): Set<string> {
+    return new Set(
+      notes.filter((note) => !this.permissionService.canView(user, note)).map((note) => note._id.toString()),
+    )
   }
 
   async get(ref: string, user: UserProfile): Promise<NoteDocument> {
@@ -382,19 +429,48 @@ export class KnowledgeService {
     return this.noteRepository.list(user.tenant, areas, undefined, limit)
   }
 
-  async listDetailed(user: UserProfile, area?: string, limit = 200): Promise<Record<string, unknown>[]> {
+  /**
+   * Workspace map. Resolves every referenced note — outlink targets plus, when bodies are
+   * requested, the targets of every [[wikilink]] — in a single lookup, so the cost is constant
+   * in the number of notes returned instead of one query per note.
+   */
+  async listDetailed(user: UserProfile, options: ListNotesOptions = {}): Promise<ListNotesResult> {
+    const { area, limit = 200, includeBody = false } = options
     const areas = await this.resolveReadableAreas(user)
-    const notes = await this.noteRepository.listDetailed(user.tenant, areas, area, limit)
-    const visible = notes.filter((note) => this.permissionService.canView(user, note))
-    const targetIds = [
-      ...new Set(visible.flatMap((note) => (note.outlinks ?? []).map((outlink) => outlink.target_id.toString()))),
-    ]
-    const targets = targetIds.length ? await this.noteRepository.findByIds(user.tenant, targetIds) : []
-    const targetsById = new Map(targets.map((target) => [target._id.toString(), target]))
 
-    return Promise.all(
-      visible.map(async (note) => this.toHttpNote(note, await this.redactBody(note, user), user, targetsById)),
+    const [notes, total] = await Promise.all([
+      this.noteRepository.listDetailed(user.tenant, areas, { area, limit, includeBody }),
+      this.noteRepository.countInScope(user.tenant, areas, area),
+    ])
+    const visible = notes.filter((note) => this.permissionService.canView(user, note))
+
+    const idByName = new Map<string, string>()
+    if (includeBody) {
+      for (const note of visible) this.resolveLinkTargets(note.body ?? '', user.tenant, idByName)
+    }
+
+    const referenceIds = [
+      ...new Set([
+        ...visible.flatMap((note) => (note.outlinks ?? []).map((outlink) => outlink.target_id.toString())),
+        ...idByName.values(),
+      ]),
+    ]
+    const references = referenceIds.length
+      ? await this.noteRepository.findByIds(user.tenant, referenceIds, NOTE_REFERENCE_FIELDS)
+      : []
+    const referencesById = new Map(references.map((reference) => [reference._id.toString(), reference]))
+    const denied = this.deniedIds(references, user)
+
+    const items = visible.map((note) =>
+      this.toHttpNote(
+        note,
+        user,
+        referencesById,
+        includeBody ? this.redactBodyWith(note.body ?? '', idByName, denied) : undefined,
+      ),
     )
+
+    return { items, total, limit, truncated: total > notes.length }
   }
 
   async versions(ref: string, user: UserProfile): Promise<Record<string, unknown>[]> {
@@ -442,11 +518,12 @@ export class KnowledgeService {
     }
   }
 
+  /** `body` is omitted entirely when the caller did not ask for content. */
   private toHttpNote(
     note: NoteDocument,
-    body: string,
     user: UserProfile,
     targetsById: Map<string, NoteDocument>,
+    body?: string,
   ): Record<string, unknown> {
     return {
       id: note._id.toString(),
@@ -455,41 +532,43 @@ export class KnowledgeService {
       title: note.title,
       kind: note.kind,
       aliases: note.aliases ?? [],
-      body,
+      ...(body === undefined ? {} : { body }),
       sensitivity: note.sensitivity,
       visible_to: note.visible_to,
       version: note.version,
       updated_at: note.updated_at,
       updated_by: note.updated_by?.toString(),
-      outlinks: (note.outlinks ?? []).map((outlink) => {
-        const target = targetsById.get(outlink.target_id.toString())
-        if (!target) {
-          return {
-            display: outlink.display,
-            target_id: null,
-            target_slug: null,
-            access: 'missing',
-          }
-        }
-        if (!this.permissionService.canView(user, target)) {
-          return {
-            display: outlink.display,
-            target_id: null,
-            target_slug: null,
-            access: 'restricted',
-          }
-        }
-        return {
-          display: outlink.display,
-          target_id: target._id.toString(),
-          target_slug: target.slug,
-          target_title: target.title,
-          target_area: target.area,
-          access: 'accessible',
-        }
-      }),
+      outlinks: this.outlinksFor(note, user, targetsById),
       unresolved: note.unresolved,
     }
+  }
+
+  /**
+   * Outlinks as the client sees them. A target the reader cannot view is reported as
+   * `restricted` with its identity stripped — never as a usable reference.
+   */
+  private outlinksFor(
+    note: NoteDocument,
+    user: UserProfile,
+    targetsById: Map<string, NoteDocument>,
+  ): Record<string, unknown>[] {
+    return (note.outlinks ?? []).map((outlink) => {
+      const target = targetsById.get(outlink.target_id.toString())
+      if (!target) {
+        return { display: outlink.display, target_id: null, target_slug: null, access: 'missing' }
+      }
+      if (!this.permissionService.canView(user, target)) {
+        return { display: outlink.display, target_id: null, target_slug: null, access: 'restricted' }
+      }
+      return {
+        display: outlink.display,
+        target_id: target._id.toString(),
+        target_slug: target.slug,
+        target_title: target.title,
+        target_area: target.area,
+        access: 'accessible',
+      }
+    })
   }
 
   // ─── WRITE ───────────────────────────────────────────────────────────────
@@ -858,16 +937,15 @@ export class KnowledgeService {
 
     const accessibleAreas = isTenantAdmin(user) ? allAreas : allAreas.filter((a) => readableAreas(user).includes(a.key))
 
-    const notes = await this.noteRepository.list(
+    // Counted in Mongo: loading documents to count them capped every area at the page size.
+    const counts = await this.noteRepository.countByArea(
       user.tenant,
       accessibleAreas.map((a) => a.key),
-      undefined,
-      500,
     )
 
     const note_counts: Record<string, number> = {}
     for (const area of accessibleAreas) {
-      note_counts[area.key] = notes.filter((n) => n.area === area.key).length
+      note_counts[area.key] = counts[area.key] ?? 0
     }
 
     // Access levels mirror PermissionService.accessTo: read < write < manage.
@@ -894,11 +972,16 @@ export class KnowledgeService {
     }
   }
 
+  /**
+   * Archives a note and leaves every inbound [[wikilink]] in place as a pending one, so the
+   * graph rebuilds itself if the note is recreated under the same name. The source texts are
+   * never rewritten — only the derived edges change.
+   */
   async delete(
     id: string,
     baseVersion: number,
     user: UserProfile,
-  ): Promise<{ archived: true; broken_connections: number; updated_notes: number }> {
+  ): Promise<{ archived: true; pending_connections: number; updated_notes: number }> {
     const note = await this.noteRepository.findById(user.tenant, id)
     if (!note) throw new NotFoundException()
     if (!this.permissionService.canManage(user, note.area)) {
@@ -912,27 +995,21 @@ export class KnowledgeService {
     )
     const unauthorized = backlinks.find((source) => !this.permissionService.canEdit(user, source))
     if (unauthorized) {
-      throw new ForbiddenException(`Cannot break a reference from area "${unauthorized.area}" without write access`)
+      throw new ForbiddenException(
+        `Cannot leave a reference pending in area "${unauthorized.area}" without write access`,
+      )
     }
 
-    const references = [note.slug, note.title, ...(note.aliases ?? [])]
-    let brokenInbound = 0
-    let updatedNotes = 0
-    for (const source of backlinks) {
-      const unlinked = unlinkWikiReferences(source.body, references)
-      if (unlinked.removedLinks === 0) continue
-      await this.update(source._id.toString(), { body: unlinked.body }, source.version, user)
-      brokenInbound += unlinked.removedLinks
-      updatedNotes += 1
-    }
+    const { sourceIds, connections } = await this.noteRepository.unresolveOutlinks(user.tenant, id)
 
-    const brokenOutbound = (note.outlinks?.length ?? 0) + (note.unresolved?.length ?? 0)
     await this.noteRepository.softDelete(user.tenant, id)
     this.nameIndexService.removeNote(user.tenant, id, note.slug, note.aliases ?? [])
+    this.nameIndexService.detachEdgesTo(sourceIds, id)
+
     return {
       archived: true,
-      broken_connections: brokenInbound + brokenOutbound,
-      updated_notes: updatedNotes,
+      pending_connections: connections,
+      updated_notes: sourceIds.length,
     }
   }
 }

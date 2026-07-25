@@ -48,15 +48,7 @@ export class NameIndexService implements OnModuleInit {
         target_anchor: o.target_anchor,
       }))
       this.outEdges.set(id, edges)
-
-      for (const edge of edges) {
-        const targetId = edge.target_id.toString()
-        const existing = this.inEdges.get(targetId) ?? []
-        this.inEdges.set(targetId, [
-          ...existing,
-          { ...edge, target_id: new Types.ObjectId(id), target_slug: note.slug },
-        ])
-      }
+      this.indexInEdges(id, note.slug, edges)
     }
 
     this.logger.log(`NameIndex rebuilt: ${this.nameIndex.size} entries, ${this.outEdges.size} nodes`)
@@ -74,17 +66,24 @@ export class NameIndexService implements OnModuleInit {
     return this.inEdges.get(noteId) ?? []
   }
 
+  private indexInEdges(sourceId: string, sourceSlug: string, edges: Edge[]) {
+    for (const edge of edges) {
+      const destinationId = edge.target_id.toString()
+      const existing = this.inEdges.get(destinationId) ?? []
+      this.inEdges.set(destinationId, [
+        ...existing,
+        { ...edge, target_id: new Types.ObjectId(sourceId), target_slug: sourceSlug },
+      ])
+    }
+  }
+
   addNote(tenant: string, noteId: string, slug: string, aliases: string[], outlinks: Edge[]) {
     this.nameIndex.set(`${tenant}:${slug}`, noteId)
     for (const alias of aliases) {
       this.nameIndex.set(`${tenant}:${alias}`, noteId)
     }
     this.outEdges.set(noteId, outlinks)
-    for (const edge of outlinks) {
-      const targetId = edge.target_id.toString()
-      const existing = this.inEdges.get(targetId) ?? []
-      this.inEdges.set(targetId, [...existing, edge])
-    }
+    this.indexInEdges(noteId, slug, outlinks)
   }
 
   removeNote(tenant: string, noteId: string, slug: string, aliases: string[]) {
@@ -94,12 +93,24 @@ export class NameIndexService implements OnModuleInit {
     }
     const outlinks = this.outEdges.get(noteId) ?? []
     this.outEdges.delete(noteId)
+    this.inEdges.delete(noteId)
     for (const edge of outlinks) {
-      const targetId = edge.target_id.toString()
-      const existing = this.inEdges.get(targetId) ?? []
+      const destinationId = edge.target_id.toString()
+      const existing = this.inEdges.get(destinationId) ?? []
       this.inEdges.set(
-        targetId,
+        destinationId,
         existing.filter((e) => e.target_id.toString() !== noteId),
+      )
+    }
+  }
+
+  detachEdgesTo(sourceIds: string[], destinationId: string) {
+    for (const sourceId of sourceIds) {
+      const edges = this.outEdges.get(sourceId)
+      if (!edges) continue
+      this.outEdges.set(
+        sourceId,
+        edges.filter((edge) => edge.target_id.toString() !== destinationId),
       )
     }
   }
