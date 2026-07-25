@@ -20,4 +20,20 @@ export default () => ({
     cookieSecure: process.env.COOKIE_SECURE === 'true' || process.env.NODE_ENV === 'production',
     cookieSameSite: process.env.COOKIE_SAME_SITE ?? (process.env.NODE_ENV === 'production' ? 'none' : 'lax'),
   },
+  aws: {
+    region: process.env.AWS_REGION ?? 'us-east-1',
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID ?? '',
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY ?? '',
+    snsArn: process.env.AWS_SNS_ARN ?? '',
+    s3Bucket: process.env.AWS_S3_BUCKET ?? '',
+    s3Endpoint: process.env.AWS_S3_ENDPOINT || undefined,
+    s3ForcePathStyle: process.env.AWS_S3_FORCE_PATH_STYLE === 'true',
+  },
+  assets: {
+    maxBytes: Number(process.env.ASSET_MAX_BYTES ?? String(10 * 1024 * 1024)),
+    allowedMimes: (process.env.ASSET_ALLOWED_MIMES ?? 'image/png,image/jpeg,image/webp,image/gif')
+      .split(',')
+      .map((mime) => mime.trim().toLowerCase())
+      .filter(Boolean),
+  },
 })

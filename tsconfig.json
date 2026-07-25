@@ -13,7 +13,7 @@
     "paths": {
       "@/*": ["./src/*"]
     },
-    "types": ["node", "express", "vitest/globals"],
+    "types": ["node", "express", "multer", "vitest/globals"],
     "incremental": true,
     "skipLibCheck": true,
     "strictNullChecks": true,

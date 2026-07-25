@@ -52,3 +52,26 @@ export class DeleteNoteQueryDto extends createZodDto(
     base_version: z.coerce.number().int().positive(),
   }),
 ) {}
+
+/** Multipart body: every field arrives as a string, hence the coercion on visible_to. */
+export class UploadAssetDto extends createZodDto(
+  z.object({
+    area: z.string().min(1).max(40),
+    sensitivity: z.nativeEnum(Sensitivity).optional(),
+    visible_to: z
+      .union([z.string(), z.array(z.string())])
+      .optional()
+      .transform((value) => {
+        if (value === undefined) return undefined
+        const list = Array.isArray(value) ? value : value.split(',')
+        return list.map((area) => area.trim()).filter(Boolean)
+      }),
+  }),
+) {}
+
+export class ListAssetsQueryDto extends createZodDto(
+  z.object({
+    area: z.string().optional(),
+    limit: z.coerce.number().int().min(1).max(500).default(100),
+  }),
+) {}

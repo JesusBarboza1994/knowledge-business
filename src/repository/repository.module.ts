@@ -10,6 +10,8 @@ import { Note, NoteSchema } from './schemas/note/note.schema'
 import { NoteRepository } from './schemas/note/note.repository'
 import { NoteVersion, NoteVersionSchema } from './schemas/note-version/note-version.schema'
 import { NoteVersionRepository } from './schemas/note-version/note-version.repository'
+import { Asset, AssetSchema } from './schemas/asset/asset.schema'
+import { AssetRepository } from './schemas/asset/asset.repository'
 
 @Module({
   imports: [
@@ -19,9 +21,24 @@ import { NoteVersionRepository } from './schemas/note-version/note-version.repos
       { name: User.name, schema: UserSchema },
       { name: Note.name, schema: NoteSchema },
       { name: NoteVersion.name, schema: NoteVersionSchema },
+      { name: Asset.name, schema: AssetSchema },
     ]),
   ],
-  providers: [OrganizationRepository, AreaRepository, UserRepository, NoteRepository, NoteVersionRepository],
-  exports: [OrganizationRepository, AreaRepository, UserRepository, NoteRepository, NoteVersionRepository],
+  providers: [
+    OrganizationRepository,
+    AreaRepository,
+    UserRepository,
+    NoteRepository,
+    NoteVersionRepository,
+    AssetRepository,
+  ],
+  exports: [
+    OrganizationRepository,
+    AreaRepository,
+    UserRepository,
+    NoteRepository,
+    NoteVersionRepository,
+    AssetRepository,
+  ],
 })
 export class RepositoryModule {}
