@@ -370,17 +370,19 @@ export class KnowledgeService {
     })
   }
 
-  /** Single-note redaction: one lookup for this note's link targets. */
-  private async redactBody(note: NoteDocument, user: UserProfile): Promise<string> {
-    const idByName = this.resolveLinkTargets(note.body, user.tenant)
-    if (idByName.size === 0) return note.body
-
-    const targets = await this.noteRepository.findByIds(
-      user.tenant,
-      [...new Set(idByName.values())],
-      NOTE_REFERENCE_FIELDS,
-    )
-    return this.redactBodyWith(note.body, idByName, this.deniedIds(targets, user))
+  /**
+   * The slug check and the insert are not atomic, so a concurrent create can still lose the
+   * race against the unique index. Report that as the conflict it is, not as a 500.
+   */
+  private async createOrConflict(data: Partial<Note>): Promise<NoteDocument> {
+    try {
+      return await this.noteRepository.create(data)
+    } catch (error) {
+      if ((error as { code?: number }).code === 11000) {
+        throw new ConflictException(`A note with slug "${data.slug}" already exists`)
+      }
+      throw error
+    }
   }
 
   private deniedIds(notes: NoteDocument[], user: UserProfile): Set<string> {
@@ -404,24 +406,18 @@ export class KnowledgeService {
     const note = await this.get(ref, user)
     const noteId = note._id.toString()
 
-    const filterEdge = async (edge: Edge): Promise<boolean> => {
-      const targetNote = await this.noteRepository.findById(user.tenant, edge.target_id.toString())
-      if (!targetNote) return false
-      return this.permissionService.canView(user, targetNote)
-    }
-
     const out = dir !== LinkDirection.IN ? this.nameIndexService.getOutEdges(noteId) : []
     const inn = dir !== LinkDirection.OUT ? this.nameIndexService.getInEdges(noteId) : []
 
-    const [filteredOut, filteredIn] = await Promise.all([
-      Promise.all(out.map(async (e) => ((await filterEdge(e)) ? e : null))),
-      Promise.all(inn.map(async (e) => ((await filterEdge(e)) ? e : null))),
-    ])
+    // One lookup for every edge on both sides, instead of one per edge.
+    const ids = [...new Set([...out, ...inn].map((edge) => edge.target_id.toString()))]
+    const reachable = ids.length ? await this.noteRepository.findByIds(user.tenant, ids, NOTE_REFERENCE_FIELDS) : []
+    const visible = new Set(
+      reachable.filter((target) => this.permissionService.canView(user, target)).map((target) => target._id.toString()),
+    )
+    const keep = (edges: Edge[]) => edges.filter((edge) => visible.has(edge.target_id.toString()))
 
-    return {
-      out: filteredOut.filter(Boolean),
-      in: filteredIn.filter(Boolean),
-    }
+    return { out: keep(out), in: keep(inn) }
   }
 
   async list(user: UserProfile, limit = 50): Promise<NoteDocument[]> {
@@ -473,16 +469,25 @@ export class KnowledgeService {
     return { items, total, limit, truncated: total > notes.length }
   }
 
+  /** History is redacted like the live note: a reader must not recover a restricted link from it. */
   async versions(ref: string, user: UserProfile): Promise<Record<string, unknown>[]> {
     const note = await this.get(ref, user)
     const versions = await this.noteVersionRepository.findByNoteId(note._id.toString())
     const uniqueVersions = versions.filter(
       (version, index) => versions.findIndex((candidate) => candidate.version === version.version) === index,
     )
+
+    const idByName = new Map<string, string>()
+    for (const version of uniqueVersions) this.resolveLinkTargets(version.body ?? '', user.tenant, idByName)
+    const targets = idByName.size
+      ? await this.noteRepository.findByIds(user.tenant, [...new Set(idByName.values())], NOTE_REFERENCE_FIELDS)
+      : []
+    const denied = this.deniedIds(targets, user)
+
     return uniqueVersions.map((version) => ({
       version: version.version,
       title: version.title,
-      body: version.body,
+      body: this.redactBodyWith(version.body ?? '', idByName, denied),
       sensitivity: version.sensitivity,
       visible_to: version.visible_to,
       edited_at: version.edited_at,
@@ -794,7 +799,7 @@ export class KnowledgeService {
       }
     }
 
-    const note = await this.noteRepository.create({
+    const note = await this.createOrConflict({
       tenant: user.tenant,
       area: data.area,
       slug,
@@ -824,18 +829,21 @@ export class KnowledgeService {
       edited_by: new Types.ObjectId(user.id),
     })
 
-    const danglings = await this.noteRepository.findDanglings(user.tenant, slug)
-    for (const dangling of danglings) {
-      const edge: Outlink = {
-        target_id: note._id,
-        target_slug: slug,
-        display: slug,
-        source_heading: '',
-        source_block: '',
-        target_anchor: null,
-        count: 1,
+    // Repair pending links under every name this note answers to, as createBatch does.
+    for (const name of [slug, ...(note.aliases ?? [])]) {
+      const danglings = await this.noteRepository.findDanglings(user.tenant, name)
+      for (const dangling of danglings) {
+        const unresolvedLink = dangling.unresolved.find((link) => link.name === name)
+        await this.noteRepository.resolveDangling(dangling._id.toString(), name, {
+          target_id: note._id,
+          target_slug: slug,
+          display: name,
+          source_heading: '',
+          source_block: unresolvedLink?.source_block ?? '',
+          target_anchor: null,
+          count: 1,
+        })
       }
-      await this.noteRepository.resolveDangling(dangling._id.toString(), slug, edge)
     }
 
     const edges: Edge[] = outlinks.map((o) => ({

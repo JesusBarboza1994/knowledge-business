@@ -88,7 +88,19 @@ export class Note {
 
 export const NoteSchema = SchemaFactory.createForClass(Note)
 
-NoteSchema.index({ tenant: 1, slug: 1 }, { unique: true })
+/**
+ * Uniqueness applies to live notes only: every lookup filters by ACTIVE, so an archived note
+ * must not keep reserving its slug — otherwise recreating it fails with a raw duplicate-key
+ * error and the pending links it left behind can never be restored.
+ *
+ * Named explicitly so it can be built alongside the old `tenant_1_slug_1` during migration:
+ * both exist for a moment, then the old one is dropped, leaving no window without uniqueness.
+ */
+export const ACTIVE_SLUG_INDEX = 'notes_active_slug_unique'
+NoteSchema.index(
+  { tenant: 1, slug: 1 },
+  { unique: true, partialFilterExpression: { status: ContentStatus.ACTIVE }, name: ACTIVE_SLUG_INDEX },
+)
 NoteSchema.index({ tenant: 1, status: 1, updated_at: -1 })
 NoteSchema.index({ tenant: 1, aliases: 1 })
 NoteSchema.index({ tenant: 1, area: 1, sensitivity: 1 })
