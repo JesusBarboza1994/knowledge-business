@@ -10,6 +10,7 @@ import { kbLinksSchema } from './schemas/kb-links.schema'
 import { kbListSchema } from './schemas/kb-list.schema'
 import { kbCreateSchema } from './schemas/kb-create.schema'
 import { kbUpdateSchema } from './schemas/kb-update.schema'
+import { kbMoveSchema } from './schemas/kb-move.schema'
 import { kbDeleteSchema } from './schemas/kb-delete.schema'
 import { kbCreateBatchSchema } from './schemas/kb-create-batch.schema'
 import { kbGetAssetSchema } from './schemas/kb-get-asset.schema'
@@ -132,6 +133,23 @@ export class KbTool implements McpTool {
           sensitivity?: string
           visible_to?: string[]
         }) => toSummary(await this.knowledgeService.update(id, patch, base_version, user)),
+      },
+      {
+        name: 'kb_move',
+        description:
+          'Reclassify a note without editing its body: move it to another area and/or change its sensitivity. Moving areas needs write access in both the current and target area. Slug, aliases and [[links]] are preserved. Provide base_version for optimistic locking. Returns a compact confirmation (id, slug, area, sensitivity, version).',
+        schema: kbMoveSchema,
+        handler: async ({
+          id,
+          base_version,
+          ...patch
+        }: {
+          id: string
+          base_version: number
+          area?: string
+          sensitivity?: string
+          visible_to?: string[]
+        }) => toSummary(await this.knowledgeService.move(id, patch, base_version, user)),
       },
       {
         name: 'kb_delete',

@@ -312,3 +312,85 @@ describe('KnowledgeService batch creation', () => {
     expect(nameIndexService.rebuild).toHaveBeenCalledOnce()
   })
 })
+
+describe('KnowledgeService move', () => {
+  function buildForMove(options: {
+    source?: Partial<NoteDocument>
+    canEdit?: boolean
+    canWriteTo?: boolean
+    targetArea?: unknown
+  }) {
+    const source = note({ area: 'develop', version: 1, ...options.source })
+    const noteRepository = {
+      findById: vi.fn().mockResolvedValue(source),
+      update: vi
+        .fn()
+        .mockImplementation(async (_tenant: string, _id: string, data: Partial<NoteDocument>) =>
+          note({ ...source, ...data }),
+        ),
+    }
+    const noteVersionRepository = { append: vi.fn().mockResolvedValue(undefined) }
+    const areaRepository = {
+      findByKey: vi.fn().mockResolvedValue('targetArea' in options ? options.targetArea : { key: 'product' }),
+    }
+    const permissionService = {
+      canEdit: vi.fn().mockReturnValue(options.canEdit ?? true),
+      canWriteTo: vi.fn().mockReturnValue(options.canWriteTo ?? true),
+    }
+    const service = new KnowledgeService(
+      noteRepository as never,
+      noteVersionRepository as never,
+      areaRepository as never,
+      permissionService as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    )
+    return { service, source, noteRepository, noteVersionRepository, permissionService }
+  }
+
+  it('cambia el área y registra una nueva versión cuando hay permiso de escritura en ambas áreas', async () => {
+    const { service, noteRepository, noteVersionRepository } = buildForMove({})
+
+    const updated = await service.move('id', { area: 'product' }, 1, user)
+
+    expect(updated.area).toBe('product')
+    expect(noteRepository.update).toHaveBeenCalledWith(
+      'mente2',
+      'id',
+      expect.objectContaining({ area: 'product', version: 2 }),
+    )
+    expect(noteVersionRepository.append).toHaveBeenCalledOnce()
+  })
+
+  it('actualiza sólo la sensitivity sin exigir área destino', async () => {
+    const { service, noteRepository } = buildForMove({})
+
+    const updated = await service.move('id', { sensitivity: Sensitivity.CONFIDENTIAL }, 1, user)
+
+    expect(updated.sensitivity).toBe(Sensitivity.CONFIDENTIAL)
+    expect(noteRepository.update).toHaveBeenCalledWith(
+      'mente2',
+      'id',
+      expect.not.objectContaining({ area: expect.anything() }),
+    )
+  })
+
+  it('rechaza mover a un área sin permiso de escritura en el destino', async () => {
+    const { service } = buildForMove({ canWriteTo: false })
+
+    await expect(service.move('id', { area: 'product' }, 1, user)).rejects.toThrow()
+  })
+
+  it('rechaza cuando la versión base no coincide (bloqueo optimista)', async () => {
+    const { service } = buildForMove({ source: { version: 3 } })
+
+    await expect(service.move('id', { sensitivity: Sensitivity.PUBLIC_ORG }, 1, user)).rejects.toThrow(/conflict/i)
+  })
+
+  it('no mueve notas de sistema entre áreas', async () => {
+    const { service } = buildForMove({ source: { kind: 'index' } })
+
+    await expect(service.move('id', { area: 'product' }, 1, user)).rejects.toThrow(/System notes/i)
+  })
+})

@@ -83,6 +83,12 @@ export interface UpdateNotePatch {
   visible_to?: string[]
 }
 
+export interface MoveNotePatch {
+  area?: string
+  sensitivity?: string
+  visible_to?: string[]
+}
+
 export interface GetNoteOptions {
   mode?: 'preview' | 'full'
   heading?: string
@@ -944,6 +950,54 @@ export class KnowledgeService {
     this.nameIndexService.updateNote(user.tenant, id, updated.slug, updated.aliases ?? [], edges)
 
     await this.assetService.syncNoteUsage(updated, embeddedAssets)
+
+    return updated
+  }
+
+  /**
+   * Reclassifies a note without touching its body: change the area it belongs to and/or its
+   * sensitivity. Moving to another area requires write access in *both* the source (current) and
+   * the target area, so a note can never be pushed into an area the caller could not write to
+   * directly. The slug, aliases and [[link]] graph are name-scoped per tenant, not per area, so a
+   * move leaves them — and every inbound backlink — untouched.
+   */
+  async move(id: string, patch: MoveNotePatch, baseVersion: number, user: UserProfile): Promise<NoteDocument> {
+    const note = await this.noteRepository.findById(user.tenant, id)
+    if (!note) throw new NotFoundException()
+    if (!this.permissionService.canEdit(user, note)) throw new ForbiddenException()
+    if (note.version !== baseVersion) throw new ConflictException('Version conflict — reload and retry')
+
+    const updateData: Partial<Note> = {
+      version: note.version + 1,
+      updated_by: new Types.ObjectId(user.id),
+    }
+
+    if (patch.area !== undefined && patch.area !== note.area) {
+      if (note.kind !== NoteKind.NOTE) throw new ForbiddenException('System notes cannot be moved between areas')
+      const target = await this.areaRepository.findByKey(user.tenant, patch.area)
+      if (!target) throw new NotFoundException(`Area not found: ${patch.area}`)
+      if (!this.permissionService.canWriteTo(user, target.key)) {
+        throw new ForbiddenException(`Write access is required in target area "${target.key}" to move a note into it`)
+      }
+      updateData.area = target.key
+    }
+
+    if (patch.sensitivity !== undefined) updateData.sensitivity = patch.sensitivity
+    if (patch.visible_to !== undefined) updateData.visible_to = patch.visible_to
+
+    const updated = await this.noteRepository.update(user.tenant, id, updateData)
+    if (!updated) throw new NotFoundException()
+
+    await this.noteVersionRepository.append({
+      note_id: updated._id,
+      tenant: user.tenant,
+      version: updated.version,
+      title: updated.title,
+      body: updated.body,
+      sensitivity: updated.sensitivity,
+      visible_to: updated.visible_to,
+      edited_by: new Types.ObjectId(user.id),
+    })
 
     return updated
   }
