@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { ConfigService } from '@nestjs/config'
 import { S3Service } from './s3.service'
-import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3'
+import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import { FailedMediaUploadException } from '@/commons/exceptions/s3/failed-media-upload.exception'
 import { ObjectNotFoundException } from '@/commons/exceptions/s3/object-not-found.exception'
 
@@ -40,6 +40,19 @@ describe('S3Service', () => {
   it('reports whether a bucket is configured', () => {
     expect(service.isConfigured).toBe(true)
     expect(buildService({ s3Bucket: '' }).isConfigured).toBe(false)
+  })
+
+  it('names the missing configuration instead of leaving a raw SDK error', () => {
+    expect(service.configurationHint).toBeNull()
+    expect(buildService({ s3Bucket: '' }).configurationHint).toContain('AWS_S3_BUCKET')
+    expect(buildService({ accessKeyId: '' }).configurationHint).toContain('AWS_ACCESS_KEY_ID')
+  })
+
+  /** Empty strings make the SDK sign with a blank key; omitting them uses the IAM role chain. */
+  it('omits static credentials when they are not fully set', () => {
+    buildService({ accessKeyId: '', secretAccessKey: '' })
+
+    expect(vi.mocked(S3Client).mock.calls.at(-1)?.[0]).not.toHaveProperty('credentials')
   })
 
   describe('putObject', () => {

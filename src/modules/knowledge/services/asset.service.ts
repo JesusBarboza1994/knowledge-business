@@ -43,6 +43,15 @@ export interface AssetContent {
   etag: string
 }
 
+/** Body reference prefix. Kept here so the tool layer never rebuilds the string by hand. */
+export const ASSET_REF_PREFIX = 'kb:asset/'
+
+/** Accepts what a note body contains (`kb:asset/<id>`) as readily as a bare id. */
+export function idFromRef(ref: string): string {
+  const trimmed = ref.trim()
+  return trimmed.startsWith(ASSET_REF_PREFIX) ? trimmed.slice(ASSET_REF_PREFIX.length) : trimmed
+}
+
 /** image-size doubles as a format sniffer: it reads the real header, not the declared mime. */
 const MIME_BY_DETECTED_TYPE: Record<string, string> = {
   png: 'image/png',
@@ -156,6 +165,26 @@ export class AssetService {
     return { id, status: archived.status }
   }
 
+  /**
+   * Bytes as base64 plus the metadata the model cannot infer from the picture itself. Callers pass
+   * either a bare id or the `kb:asset/<id>` reference they just read inside a note body.
+   */
+  async readAsImage(
+    ref: string,
+    user: UserProfile,
+    maxBytes: number,
+  ): Promise<{ summary: AssetSummary; base64: string }> {
+    const asset = await this.authorizedAsset(idFromRef(ref), user)
+    if (asset.size > maxBytes) {
+      throw new BadRequestException(
+        `Asset is ${asset.size} bytes, over the ${maxBytes} byte limit for inline delivery. ` +
+          'Its metadata is still available through kb_list_assets.',
+      )
+    }
+    const buffer = await this.s3Service.getObject(asset.storage_key)
+    return { summary: this.toSummary(asset), base64: buffer.toString('base64') }
+  }
+
   private async authorizedAsset(id: string, user: UserProfile): Promise<AssetDocument> {
     const asset = await this.assetRepository.findById(user.tenant, id)
     if (!asset) throw new NotFoundException(`Asset not found: ${id}`)
@@ -191,7 +220,7 @@ export class AssetService {
 
   private toSummary(asset: AssetDocument): AssetSummary {
     const id = asset._id.toString()
-    const ref = `kb:asset/${id}`
+    const ref = `${ASSET_REF_PREFIX}${id}`
     return {
       id,
       area: asset.area,

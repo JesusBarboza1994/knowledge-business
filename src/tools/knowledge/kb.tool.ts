@@ -12,6 +12,15 @@ import { kbCreateSchema } from './schemas/kb-create.schema'
 import { kbUpdateSchema } from './schemas/kb-update.schema'
 import { kbDeleteSchema } from './schemas/kb-delete.schema'
 import { kbCreateBatchSchema } from './schemas/kb-create-batch.schema'
+import { kbGetAssetSchema } from './schemas/kb-get-asset.schema'
+import { AssetService } from '@/modules/knowledge/services/asset.service'
+import { ToolImage } from '@/commons/decorators/tool-response.interceptor'
+
+/**
+ * Anthropic's image input cap. Anything larger is rejected with its metadata instead, so the model
+ * gets a usable answer rather than a transport failure.
+ */
+const INLINE_ASSET_MAX_BYTES = 5 * 1024 * 1024
 
 /** Compact confirmation for create/update — avoids echoing the full body back to the caller. */
 function toSummary(note: NoteDocument) {
@@ -28,7 +37,10 @@ function toSummary(note: NoteDocument) {
 
 @Injectable()
 export class KbTool implements McpTool {
-  constructor(private readonly knowledgeService: KnowledgeService) {}
+  constructor(
+    private readonly knowledgeService: KnowledgeService,
+    private readonly assetService: AssetService,
+  ) {}
 
   definitions(user: UserProfile): ToolDefinition[] {
     return [
@@ -128,6 +140,16 @@ export class KbTool implements McpTool {
         schema: kbDeleteSchema,
         handler: async ({ id, base_version }: { id: string; base_version: number }) =>
           this.knowledgeService.delete(id, base_version, user),
+      },
+      {
+        name: 'kb_get_asset',
+        description:
+          'Retrieve an image embedded in a note and look at it. Note bodies reference images as ![alt](kb:asset/<id>); pass that reference here to see the actual picture — reading the note alone only gives you the alt text. Subject to the same permissions as the note that embeds it.',
+        schema: kbGetAssetSchema,
+        handler: async ({ ref }: { ref: string }) => {
+          const { summary, base64 } = await this.assetService.readAsImage(ref, user, INLINE_ASSET_MAX_BYTES)
+          return new ToolImage(base64, summary.mime, summary)
+        },
       },
     ]
   }

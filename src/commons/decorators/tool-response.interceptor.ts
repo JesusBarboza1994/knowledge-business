@@ -2,7 +2,21 @@ import { HttpException } from '@nestjs/common'
 import { ResponseCode } from '../constants/response.constant'
 import { ErrorResponse } from '../types/response.types'
 
-type ToolContent = { type: 'text'; text: string }
+type ToolContent = { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }
+
+/**
+ * Returned by a handler whose payload is binary. The interceptor emits an MCP image block for it
+ * instead of the usual JSON envelope — base64 inside a text block is just characters to the model,
+ * while an image block is something it can actually look at. `meta` still travels as JSON so the
+ * caller keeps the filename, dimensions and permissions context alongside the picture.
+ */
+export class ToolImage {
+  constructor(
+    readonly data: string,
+    readonly mimeType: string,
+    readonly meta?: unknown,
+  ) {}
+}
 
 type ToolSuccessResponse = {
   success: true
@@ -31,15 +45,24 @@ export function withToolInterceptor(
     try {
       const data = await handler(args)
 
-      const response: ToolSuccessResponse = {
+      const envelope = (payload: unknown): ToolSuccessResponse => ({
         success: true,
         code: ResponseCode.SUCCESS,
         message: ResponseCode.SUCCESS,
-        data,
+        data: payload,
+      })
+
+      if (data instanceof ToolImage) {
+        return {
+          content: [
+            { type: 'image' as const, data: data.data, mimeType: data.mimeType },
+            { type: 'text' as const, text: JSON.stringify(envelope(data.meta), null, 2) },
+          ],
+        }
       }
 
       return {
-        content: [{ type: 'text' as const, text: JSON.stringify(response, null, 2) }],
+        content: [{ type: 'text' as const, text: JSON.stringify(envelope(data), null, 2) }],
       }
     } catch (error) {
       let code: string = ResponseCode.INTERNAL_SERVER_ERROR

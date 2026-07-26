@@ -14,6 +14,7 @@ import { ObjectNotFoundException } from '@/commons/exceptions/s3/object-not-foun
 export class S3Service {
   private readonly s3Client: S3Client
   private readonly bucket: string
+  private readonly hasStaticCredentials: boolean
   private readonly logger = new Logger(S3Service.name)
 
   constructor(private readonly configService: ConfigService) {
@@ -21,20 +22,38 @@ export class S3Service {
 
     this.s3Client = new S3Client({
       region: aws?.region ?? '',
-      credentials: {
-        accessKeyId: aws?.accessKeyId ?? '',
-        secretAccessKey: aws?.secretAccessKey ?? '',
-      },
+      /**
+       * Only pass static keys when both are present. Handing the SDK a pair of empty strings makes
+       * it sign requests with a blank access key and S3 answers "authorization header is
+       * malformed", which reads like a bug rather than missing configuration. Omitting the field
+       * falls back to the default credential chain, which is what an IAM role needs.
+       */
+      ...(aws?.accessKeyId && aws?.secretAccessKey
+        ? { credentials: { accessKeyId: aws.accessKeyId, secretAccessKey: aws.secretAccessKey } }
+        : {}),
       // MinIO and R2 need an explicit endpoint; real S3 resolves it from the region.
       ...(aws?.s3Endpoint ? { endpoint: aws.s3Endpoint, forcePathStyle: aws.s3ForcePathStyle } : {}),
     })
 
     this.bucket = aws?.s3Bucket ?? ''
+    this.hasStaticCredentials = Boolean(aws?.accessKeyId && aws?.secretAccessKey)
   }
 
   /** Lets callers fail with a clear message instead of a raw SDK error when no bucket is set. */
   get isConfigured(): boolean {
     return this.bucket.length > 0
+  }
+
+  /**
+   * Names what is missing. Static keys are optional — on an instance with an IAM role the default
+   * credential chain supplies them — so this reports rather than blocks.
+   */
+  get configurationHint(): string | null {
+    if (!this.bucket) return 'AWS_S3_BUCKET is empty'
+    if (!this.hasStaticCredentials) {
+      return 'AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY are empty — relying on the default AWS credential chain'
+    }
+    return null
   }
 
   async putObject(key: string, body: Buffer, contentType: string): Promise<void> {
@@ -44,7 +63,9 @@ export class S3Service {
       )
     } catch (error) {
       this.logger.error(`Failed to upload ${key} to S3`, error)
-      throw new FailedMediaUploadException(error instanceof Error ? error.message : String(error))
+      const reason = error instanceof Error ? error.message : String(error)
+      const hint = this.configurationHint
+      throw new FailedMediaUploadException(hint ? `${reason} (${hint})` : reason)
     }
   }
 

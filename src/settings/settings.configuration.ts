@@ -22,8 +22,10 @@ export default () => ({
   },
   aws: {
     region: process.env.AWS_REGION ?? 'us-east-1',
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID ?? '',
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY ?? '',
+    // AWS_ACCESS_KEY / AWS_SECRET_KEY are the names used across the other services here;
+    // the *_ID / *_ACCESS_KEY spellings are the SDK's own, accepted as a fallback.
+    accessKeyId: process.env.AWS_ACCESS_KEY || process.env.AWS_ACCESS_KEY_ID || '',
+    secretAccessKey: process.env.AWS_SECRET_KEY || process.env.AWS_SECRET_ACCESS_KEY || '',
     snsArn: process.env.AWS_SNS_ARN ?? '',
     s3Bucket: process.env.AWS_S3_BUCKET ?? '',
     s3Endpoint: process.env.AWS_S3_ENDPOINT || undefined,
