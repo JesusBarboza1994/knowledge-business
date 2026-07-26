@@ -21,9 +21,18 @@ export class Asset {
   @Prop({ required: true, trim: true, lowercase: true })
   tenant: string
 
-  /** Permission scope, copied from the area the upload targeted. */
+  /** Area the upload targeted. Origin only — see `areas` for what a read is authorized against. */
   @Prop({ required: true, trim: true, lowercase: true })
   area: string
+
+  /**
+   * Every area whose notes embed this asset, `area` included. Dedupe is per tenant by content
+   * hash, so one record can legitimately be shown from several areas: without this, the second
+   * uploader's own note would answer 403 because the record still carried the first one's area.
+   * Empty on records created before this field existed; readers fall back to `area`.
+   */
+  @Prop({ type: [String], default: [] })
+  areas: string[]
 
   @Prop({ default: Sensitivity.PUBLIC_ORG, enum: Object.values(Sensitivity) })
   sensitivity: string
@@ -83,6 +92,7 @@ export const AssetSchema = SchemaFactory.createForClass(Asset)
 AssetSchema.index({ tenant: 1, sha256: 1 }, { unique: true })
 AssetSchema.index({ storage_key: 1 }, { unique: true })
 AssetSchema.index({ tenant: 1, area: 1, status: 1 })
+AssetSchema.index({ tenant: 1, areas: 1, status: 1 })
 AssetSchema.index({ tenant: 1, used_by: 1 })
 // Orphan sweep: active assets no note references, oldest first.
 AssetSchema.index({ tenant: 1, status: 1, used_by: 1, created_at: 1 })

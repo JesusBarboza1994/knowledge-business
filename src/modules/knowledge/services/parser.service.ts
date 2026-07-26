@@ -19,11 +19,20 @@ export interface ParsedLink {
   source_block: string
 }
 
+export interface ParsedAsset {
+  id: string
+  source_block: string
+}
+
 export interface ParsedBody {
   headings: ParsedHeading[]
   blocks: ParsedBlock[]
   links: ParsedLink[]
+  assets: ParsedAsset[]
 }
+
+/** Matches the image embed a note body uses for an asset: ![alt](kb:asset/<id>). */
+const ASSET_EMBED = /!\[[^\]]*\]\(\s*kb:asset\/([a-f0-9]{24})/gi
 
 @Injectable()
 export class ParserService {
@@ -32,6 +41,7 @@ export class ParserService {
     const headings: ParsedHeading[] = []
     const blocks: ParsedBlock[] = []
     const links: ParsedLink[] = []
+    const assets: ParsedAsset[] = []
 
     let currentHeading = ''
     let blockIndex = 0
@@ -75,9 +85,10 @@ export class ParserService {
 
       const blockId = pushBlock(trimmedLine)
       links.push(...this.linksIn(trimmedLine, currentHeading, blockId))
+      assets.push(...this.assetsIn(trimmedLine, blockId))
     }
 
-    return { headings, blocks, links }
+    return { headings, blocks, links, assets }
   }
 
   /**
@@ -86,6 +97,18 @@ export class ParserService {
    */
   private withoutCodeSpans(text: string): string {
     return text.replace(/(`+)(?:(?!\1)[\s\S])*?\1/g, ' ')
+  }
+
+  /**
+   * Which assets a line actually shows. Shares the code-span guard with links: a `kb:asset/...`
+   * quoted inside backticks is documentation, and counting it as a use would keep an image alive
+   * forever — or drag a note's sensitivity onto an asset it never really displayed.
+   */
+  private assetsIn(text: string, sourceBlock: string): ParsedAsset[] {
+    return [...this.withoutCodeSpans(text).matchAll(ASSET_EMBED)].map((match) => ({
+      id: match[1].toLowerCase(),
+      source_block: sourceBlock,
+    }))
   }
 
   private linksIn(text: string, sourceHeading: string, sourceBlock: string): ParsedLink[] {

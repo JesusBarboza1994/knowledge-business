@@ -15,6 +15,7 @@ import { AreaAccess, ContentStatus, LinkDirection, NoteKind, Sensitivity } from 
 import { PermissionService } from './permission.service'
 import { ParserService } from './parser.service'
 import { NameIndexService, Edge } from './name-index.service'
+import { AssetService } from './asset.service'
 import { Note, NoteDocument, Outlink } from '@/repository/schemas/note/note.schema'
 import { OrganizationRepository } from '@/repository/schemas/organization/organization.repository'
 
@@ -116,6 +117,7 @@ export class KnowledgeService {
     private readonly parserService: ParserService,
     private readonly nameIndexService: NameIndexService,
     private readonly organizationRepository: OrganizationRepository,
+    private readonly assetService: AssetService,
   ) {}
 
   // ─── READ ────────────────────────────────────────────────────────────────
@@ -752,6 +754,12 @@ export class KnowledgeService {
 
     await this.nameIndexService.rebuild()
 
+    // Drafts and created records line up by index: createMany preserves the input order.
+    for (const [index, note] of created.entries()) {
+      const assets = drafts[index]?.parsed.assets.map((asset) => asset.id) ?? []
+      if (assets.length > 0) await this.assetService.syncNoteUsage(note, assets)
+    }
+
     return {
       created,
       connections: {
@@ -856,6 +864,11 @@ export class KnowledgeService {
     }))
     this.nameIndexService.addNote(user.tenant, note._id.toString(), slug, [], edges)
 
+    await this.assetService.syncNoteUsage(
+      note,
+      parsed.assets.map((asset) => asset.id),
+    )
+
     return note
   }
 
@@ -870,6 +883,13 @@ export class KnowledgeService {
       version: note.version + 1,
       updated_by: new Types.ObjectId(user.id),
     }
+
+    /**
+     * Only recomputed when the body changed. A patch that only touches sensitivity still has to
+     * reach syncNoteUsage, so the existing embeds are reused rather than left unsynced — that is
+     * what makes "raise an asset's visibility with its note" work on a visibility-only edit.
+     */
+    let embeddedAssets = this.parserService.parse(note.body).assets.map((asset) => asset.id)
 
     if (patch.body !== undefined) {
       const parsed = this.parserService.parse(patch.body)
@@ -896,6 +916,7 @@ export class KnowledgeService {
       updateData.blocks = parsed.blocks
       updateData.outlinks = outlinks
       updateData.unresolved = unresolved
+      embeddedAssets = parsed.assets.map((asset) => asset.id)
     }
 
     const updated = await this.noteRepository.update(user.tenant, id, updateData)
@@ -921,6 +942,8 @@ export class KnowledgeService {
       target_anchor: o.target_anchor,
     }))
     this.nameIndexService.updateNote(user.tenant, id, updated.slug, updated.aliases ?? [], edges)
+
+    await this.assetService.syncNoteUsage(updated, embeddedAssets)
 
     return updated
   }
@@ -1013,6 +1036,7 @@ export class KnowledgeService {
     await this.noteRepository.softDelete(user.tenant, id)
     this.nameIndexService.removeNote(user.tenant, id, note.slug, note.aliases ?? [])
     this.nameIndexService.detachEdgesTo(sourceIds, id)
+    await this.assetService.detachNote(user.tenant, note._id)
 
     return {
       archived: true,

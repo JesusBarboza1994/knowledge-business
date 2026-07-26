@@ -25,6 +25,11 @@ function note(overrides: Partial<NoteDocument>): NoteDocument {
   } as NoteDocument
 }
 
+/** Asset usage tracking is a side effect of every write; these specs only assert the note layer. */
+function assetServiceStub() {
+  return { syncNoteUsage: vi.fn().mockResolvedValue(undefined), detachNote: vi.fn().mockResolvedValue(undefined) }
+}
+
 function serviceWith(source: NoteDocument, target: NoteDocument, canViewTarget: boolean) {
   return build({ notes: [source], references: [target], canView: (candidate) => candidate !== target || canViewTarget })
     .service
@@ -45,6 +50,7 @@ function build(options: {
   }
   const permissionService = { canView: vi.fn((_user: UserProfile, note: NoteDocument) => canView(note)) }
   const nameIndexService = { resolveSlug: vi.fn((_tenant: string, name: string) => resolveSlug(name)) }
+  const assetService = assetServiceStub()
   const service = new KnowledgeService(
     noteRepository as never,
     {} as never,
@@ -53,8 +59,9 @@ function build(options: {
     {} as never,
     nameIndexService as never,
     {} as never,
+    assetService as never,
   )
-  return { service, noteRepository, permissionService, nameIndexService }
+  return { service, noteRepository, permissionService, nameIndexService, assetService }
 }
 
 const user: UserProfile = {
@@ -207,6 +214,7 @@ describe('KnowledgeService archiving', () => {
       {} as never,
       nameIndexService as never,
       {} as never,
+      assetServiceStub() as never,
     )
 
     const result = await service.delete(target._id.toString(), 3, user)
@@ -234,6 +242,7 @@ describe('KnowledgeService archiving', () => {
       {} as never,
       {} as never,
       {} as never,
+      assetServiceStub() as never,
     )
 
     await expect(service.delete(target._id.toString(), 1, user)).rejects.toThrow(/finance/)
@@ -269,6 +278,7 @@ describe('KnowledgeService batch creation', () => {
       new ParserService(),
       nameIndexService as never,
       {} as never,
+      assetServiceStub() as never,
     )
 
     const result = await service.createBatch(

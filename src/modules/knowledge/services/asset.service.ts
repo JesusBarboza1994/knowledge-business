@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common'
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
 import { Types } from 'mongoose'
 import { createHash } from 'crypto'
@@ -52,6 +52,18 @@ export function idFromRef(ref: string): string {
   return trimmed.startsWith(ASSET_REF_PREFIX) ? trimmed.slice(ASSET_REF_PREFIX.length) : trimmed
 }
 
+/** Records written before `areas` existed only carry `area`; treat that as the single scope. */
+function effectiveAreas(asset: Pick<AssetDocument, 'area' | 'areas'>): string[] {
+  return asset.areas?.length ? asset.areas : [asset.area]
+}
+
+/** Sensitivity is ordered, so "only ever raise" needs a rank rather than string comparison. */
+const SENSITIVITY_RANK: Record<string, number> = {
+  [Sensitivity.PUBLIC_ORG]: 0,
+  [Sensitivity.INTERNAL_AREA]: 1,
+  [Sensitivity.CONFIDENTIAL]: 2,
+}
+
 /** image-size doubles as a format sniffer: it reads the real header, not the declared mime. */
 const MIME_BY_DETECTED_TYPE: Record<string, string> = {
   png: 'image/png',
@@ -68,6 +80,7 @@ const MIME_BY_DETECTED_TYPE: Record<string, string> = {
 @Injectable()
 export class AssetService {
   private readonly limits: AssetsConfig
+  private readonly logger = new Logger(AssetService.name)
 
   constructor(
     private readonly assetRepository: AssetRepository,
@@ -123,9 +136,90 @@ export class AssetService {
       width,
       height,
       uploaded_by: new Types.ObjectId(user.id),
+      areas: [area],
     })
 
     return this.toSummary(asset)
+  }
+
+  /**
+   * Records which assets a note now embeds, so an image is never a floating object nobody can
+   * account for. Called on every note write with the ids the parser found in the body.
+   *
+   * Two effects: the note is attached to those assets (and detached from the ones it dropped), and
+   * each asset's visibility rises to the note's if the note is stricter. Visibility only ever
+   * rises — an image pasted into a confidential note must not stay readable org-wide, but pasting
+   * it into a public one must not loosen an asset that another confidential note still shows.
+   *
+   * Deliberately best-effort: a failure here must not roll back the user's edit. The body is the
+   * source of truth and the sweep script can rebuild this layer from it.
+   */
+  async syncNoteUsage(
+    note: { _id: Types.ObjectId; tenant: string; area: string; sensitivity: string; visible_to?: string[] },
+    assetIds: string[],
+  ): Promise<void> {
+    try {
+      await this.assetRepository.syncUsage(note.tenant, note._id, assetIds, note.area)
+      if (assetIds.length === 0) return
+
+      const noteRank = SENSITIVITY_RANK[note.sensitivity] ?? 0
+      const assets = await this.assetRepository.findByIds(note.tenant, assetIds)
+      for (const asset of assets) {
+        if ((SENSITIVITY_RANK[asset.sensitivity] ?? 0) >= noteRank) continue
+        await this.assetRepository.raiseSensitivity(
+          note.tenant,
+          asset._id.toString(),
+          note.sensitivity,
+          note.visible_to ?? [],
+        )
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Failed to sync asset usage for note ${note._id.toString()}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      )
+    }
+  }
+
+  /** Called when a note is archived: it stops counting as a user of its images. */
+  async detachNote(tenant: string, noteId: Types.ObjectId): Promise<void> {
+    try {
+      await this.assetRepository.detachNote(tenant, noteId)
+    } catch (error) {
+      this.logger.warn(
+        `Failed to detach note ${noteId.toString()} from its assets: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      )
+    }
+  }
+
+  /**
+   * Deletes assets no note embeds any more, bytes included. `minAgeHours` protects the gap between
+   * storing an upload and saving the note that references it — without it, a slow editor would lose
+   * the image it just pasted.
+   */
+  async sweepOrphans(
+    options: { tenant?: string; minAgeHours?: number; limit?: number; apply?: boolean } = {},
+  ): Promise<{ found: number; deleted: number; bytes: number; assets: AssetSummary[] }> {
+    const { tenant, minAgeHours = 24, limit = 500, apply = false } = options
+    const createdBefore = new Date(Date.now() - minAgeHours * 60 * 60 * 1000)
+    const orphans = await this.assetRepository.findOrphans(tenant, createdBefore, limit)
+
+    let deleted = 0
+    let bytes = 0
+    for (const asset of orphans) {
+      bytes += asset.size
+      if (!apply) continue
+      // Storage first: a record without bytes is a broken image, bytes without a record are
+      // invisible garbage the next sweep cannot even find.
+      await this.s3Service.deleteObject(asset.storage_key)
+      await this.assetRepository.deleteById(asset.tenant, asset._id)
+      deleted += 1
+    }
+
+    return { found: orphans.length, deleted, bytes, assets: orphans.map((asset) => this.toSummary(asset)) }
   }
 
   /** Metadata only — cheap enough to call before deciding whether to fetch the bytes. */
@@ -188,7 +282,13 @@ export class AssetService {
   private async authorizedAsset(id: string, user: UserProfile): Promise<AssetDocument> {
     const asset = await this.assetRepository.findById(user.tenant, id)
     if (!asset) throw new NotFoundException(`Asset not found: ${id}`)
-    if (!this.permissionService.canViewScope(user, asset)) throw new ForbiddenException()
+    const authorized = this.permissionService.canViewAsset(user, {
+      tenant: asset.tenant,
+      areas: effectiveAreas(asset),
+      sensitivity: asset.sensitivity,
+      visible_to: asset.visible_to,
+    })
+    if (!authorized) throw new ForbiddenException()
     return asset
   }
 

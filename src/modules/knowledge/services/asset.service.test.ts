@@ -25,8 +25,14 @@ function build(options: { existing?: unknown; canWrite?: boolean; maxBytes?: num
     findByChecksum: vi.fn().mockResolvedValue(existing),
     create: vi.fn().mockImplementation(async (data) => ({ ...data, _id: new Types.ObjectId() })),
     findById: vi.fn().mockResolvedValue(null),
+    findByIds: vi.fn().mockResolvedValue([]),
     list: vi.fn().mockResolvedValue([]),
     archive: vi.fn().mockResolvedValue(null),
+    syncUsage: vi.fn().mockResolvedValue(undefined),
+    detachNote: vi.fn().mockResolvedValue(undefined),
+    raiseSensitivity: vi.fn().mockResolvedValue(undefined),
+    findOrphans: vi.fn().mockResolvedValue([]),
+    deleteById: vi.fn().mockResolvedValue(undefined),
   }
   const areaRepository = {
     findByKey: vi.fn().mockResolvedValue({ key: 'develop' }),
@@ -40,6 +46,7 @@ function build(options: { existing?: unknown; canWrite?: boolean; maxBytes?: num
     isConfigured: true,
     putObject: vi.fn().mockResolvedValue(undefined),
     getObject: vi.fn().mockResolvedValue(Buffer.from('bytes')),
+    deleteObject: vi.fn().mockResolvedValue(undefined),
   }
   const configService = {
     get: vi.fn().mockReturnValue({ maxBytes, allowedMimes: ['image/png', 'image/jpeg'] }),
@@ -151,5 +158,125 @@ describe('AssetService.upload', () => {
     await service.upload(upload({ filename: '../../etc/pa"sswd\n.png' }), user)
 
     expect(assetRepository.create).toHaveBeenCalledWith(expect.objectContaining({ filename: 'passwd.png' }))
+  })
+})
+
+const NOTE_ID = new Types.ObjectId()
+const ASSET_A = '6a64f94d70006eebcadf104e'
+
+function noteScope(overrides: Record<string, unknown> = {}) {
+  return {
+    _id: NOTE_ID,
+    tenant: 'mente2',
+    area: 'develop',
+    sensitivity: Sensitivity.PUBLIC_ORG,
+    visible_to: [] as string[],
+    ...overrides,
+  }
+}
+
+describe('AssetService.syncNoteUsage', () => {
+  it('registra la nota y su área en los assets que incrusta', async () => {
+    const { service, assetRepository } = build()
+
+    await service.syncNoteUsage(noteScope(), [ASSET_A])
+
+    expect(assetRepository.syncUsage).toHaveBeenCalledWith('mente2', NOTE_ID, [ASSET_A], 'develop')
+  })
+
+  it('desvincula la nota cuando ya no incrusta ninguna imagen', async () => {
+    const { service, assetRepository } = build()
+
+    await service.syncNoteUsage(noteScope(), [])
+
+    expect(assetRepository.syncUsage).toHaveBeenCalledWith('mente2', NOTE_ID, [], 'develop')
+    // Sin ids no hay nada que reevaluar: no se consulta la sensibilidad.
+    expect(assetRepository.findByIds).not.toHaveBeenCalled()
+  })
+
+  it('sube la sensibilidad del asset cuando la nota es más restringida', async () => {
+    const { service, assetRepository } = build()
+    assetRepository.findByIds.mockResolvedValue([
+      { _id: new Types.ObjectId(ASSET_A), sensitivity: Sensitivity.PUBLIC_ORG },
+    ])
+
+    await service.syncNoteUsage(noteScope({ sensitivity: Sensitivity.CONFIDENTIAL, visible_to: ['develop'] }), [
+      ASSET_A,
+    ])
+
+    expect(assetRepository.raiseSensitivity).toHaveBeenCalledWith('mente2', ASSET_A, Sensitivity.CONFIDENTIAL, [
+      'develop',
+    ])
+  })
+
+  /** Bajarla dejaría al descubierto una imagen que otra nota confidencial sigue mostrando. */
+  it('nunca la baja', async () => {
+    const { service, assetRepository } = build()
+    assetRepository.findByIds.mockResolvedValue([
+      { _id: new Types.ObjectId(ASSET_A), sensitivity: Sensitivity.CONFIDENTIAL },
+    ])
+
+    await service.syncNoteUsage(noteScope({ sensitivity: Sensitivity.PUBLIC_ORG }), [ASSET_A])
+
+    expect(assetRepository.raiseSensitivity).not.toHaveBeenCalled()
+  })
+
+  /** El cuerpo es la fuente de verdad; un fallo aquí no puede tumbar la edición del usuario. */
+  it('no propaga el fallo de la sincronización', async () => {
+    const { service, assetRepository } = build()
+    assetRepository.syncUsage.mockRejectedValue(new Error('mongo caído'))
+
+    await expect(service.syncNoteUsage(noteScope(), [ASSET_A])).resolves.toBeUndefined()
+  })
+})
+
+describe('AssetService.sweepOrphans', () => {
+  const orphan = {
+    _id: new Types.ObjectId(),
+    tenant: 'mente2',
+    area: 'develop',
+    filename: 'suelta.png',
+    mime: 'image/png',
+    size: 2048,
+    sensitivity: Sensitivity.PUBLIC_ORG,
+    storage_key: 'assets/mente2/abc.png',
+  }
+
+  it('en seco informa sin borrar nada', async () => {
+    const { service, assetRepository, s3Service } = build()
+    assetRepository.findOrphans.mockResolvedValue([orphan])
+
+    const result = await service.sweepOrphans({ tenant: 'mente2' })
+
+    expect(result).toMatchObject({ found: 1, deleted: 0, bytes: 2048 })
+    expect(s3Service.deleteObject).not.toHaveBeenCalled()
+    expect(assetRepository.deleteById).not.toHaveBeenCalled()
+  })
+
+  it('con apply borra primero los bytes y luego el registro', async () => {
+    const { service, assetRepository, s3Service } = build()
+    assetRepository.findOrphans.mockResolvedValue([orphan])
+    const order: string[] = []
+    s3Service.deleteObject.mockImplementation(async () => void order.push('s3'))
+    assetRepository.deleteById.mockImplementation(async () => void order.push('mongo'))
+
+    const result = await service.sweepOrphans({ tenant: 'mente2', apply: true })
+
+    expect(result).toMatchObject({ found: 1, deleted: 1 })
+    // Un registro sin bytes es una imagen rota; bytes sin registro son basura invisible.
+    expect(order).toEqual(['s3', 'mongo'])
+  })
+
+  it('respeta la antigüedad mínima al consultar', async () => {
+    const { service, assetRepository } = build()
+
+    await service.sweepOrphans({ tenant: 'mente2', minAgeHours: 48, limit: 10 })
+
+    const [tenant, createdBefore, limit] = assetRepository.findOrphans.mock.calls[0]
+    expect(tenant).toBe('mente2')
+    expect(limit).toBe(10)
+    const hoursAgo = (Date.now() - createdBefore.getTime()) / 3_600_000
+    expect(hoursAgo).toBeGreaterThan(47.9)
+    expect(hoursAgo).toBeLessThan(48.1)
   })
 })

@@ -50,3 +50,47 @@ describe('ParserService links', () => {
     expect(parsed.blocks.map((block) => block.text)).toEqual(['```', 'codigo', '```'])
   })
 })
+
+describe('ParserService asset embeds', () => {
+  const parser = new ParserService()
+  const ids = (body: string) => parser.parse(body).assets.map((asset) => asset.id)
+
+  const A = '6a64f94d70006eebcadf104e'
+  const B = '6a650386d3fb22006aa1d96f'
+
+  it('extrae el id de una imagen incrustada', () => {
+    const parsed = parser.parse(`# Nota\n\n![diagrama](kb:asset/${A})`)
+    expect(parsed.assets).toEqual([{ id: A, source_block: 'b_00' }])
+  })
+
+  it('reconoce varias imágenes y conserva repeticiones', () => {
+    expect(ids(`![a](kb:asset/${A})\n![b](kb:asset/${B})\n![otra vez](kb:asset/${A})`)).toEqual([A, B, A])
+  })
+
+  it('normaliza el id a minúsculas', () => {
+    expect(ids(`![x](kb:asset/${A.toUpperCase()})`)).toEqual([A])
+  })
+
+  /** Contar una referencia documentada mantendría la imagen viva para siempre. */
+  it('ignora las referencias dentro de código en línea', () => {
+    expect(ids(`Se escribe \`![alt](kb:asset/${A})\` en el cuerpo.`)).toEqual([])
+  })
+
+  it('ignora las referencias dentro de un bloque cercado', () => {
+    const body = ['```md', `![x](kb:asset/${A})`, '```', `![real](kb:asset/${B})`].join('\n')
+    expect(ids(body)).toEqual([B])
+  })
+
+  it('no confunde un enlace normal con una imagen incrustada', () => {
+    expect(ids(`[texto](kb:asset/${A})`)).toEqual([])
+  })
+
+  it('descarta ids que no son ObjectId', () => {
+    expect(ids('![x](kb:asset/no-es-un-id)')).toEqual([])
+    expect(ids('![x](kb:asset/../../secreto)')).toEqual([])
+  })
+
+  it('tolera espacio tras el paréntesis y título del enlace', () => {
+    expect(ids(`![x]( kb:asset/${A} "Título")`)).toEqual([A])
+  })
+})

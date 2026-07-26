@@ -38,6 +38,17 @@ export class PermissionService {
     return false
   }
 
+  /**
+   * An asset can be embedded from more than one area, so any of them granting access is enough.
+   * Still one indexed read, not a fan-out over the notes themselves.
+   */
+  canViewAsset(
+    user: UserProfile,
+    asset: { tenant: string; areas: string[]; sensitivity: string; visible_to?: string[] },
+  ) {
+    return asset.areas.some((area) => this.canViewScope(user, { ...asset, area }))
+  }
+
   /** Whether the user may add content to an area — the bar for uploading an asset into it. */
   canWriteTo(user: UserProfile, area: string): boolean {
     const access = this.accessTo(user, area)
