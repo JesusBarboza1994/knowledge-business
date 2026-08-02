@@ -16,6 +16,7 @@ import { PermissionService } from './permission.service'
 import { ParserService } from './parser.service'
 import { NameIndexService, Edge } from './name-index.service'
 import { AssetService } from './asset.service'
+import { EditOperation, applyEdits } from './note-edit.util'
 import { Note, NoteDocument, Outlink } from '@/repository/schemas/note/note.schema'
 import { OrganizationRepository } from '@/repository/schemas/organization/organization.repository'
 
@@ -952,6 +953,24 @@ export class KnowledgeService {
     await this.assetService.syncNoteUsage(updated, embeddedAssets)
 
     return updated
+  }
+
+  /**
+   * Partial-body edit: applies a list of literal find/insert/delete operations to the current body
+   * and persists the result through the normal update path, so link resolution, backlinks, version
+   * history and asset usage are recomputed exactly as for a full-body edit. Lets a caller change part
+   * of a long note without resending the whole body. The optimistic lock is enforced by update().
+   */
+  async edit(id: string, edits: EditOperation[], baseVersion: number, user: UserProfile): Promise<NoteDocument> {
+    const note = await this.noteRepository.findById(user.tenant, id)
+    if (!note) throw new NotFoundException()
+    if (!this.permissionService.canEdit(user, note)) throw new ForbiddenException()
+    if (note.version !== baseVersion) throw new ConflictException('Version conflict — reload and retry')
+
+    const body = applyEdits(note.body, edits)
+    if (body === note.body) throw new BadRequestException('Edits produced no change to the note body')
+
+    return this.update(id, { body }, baseVersion, user)
   }
 
   /**

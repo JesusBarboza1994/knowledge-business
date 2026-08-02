@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common'
 import { McpTool, ToolDefinition } from '../tool.interface'
 import { UserProfile } from '../user-profile.type'
 import { BatchCreateNoteData, KnowledgeService } from '@/modules/knowledge/services/knowledge.service'
+import { EditOperation } from '@/modules/knowledge/services/note-edit.util'
 import { LinkDirection } from '@/commons/enums'
 import { NoteDocument } from '@/repository/schemas/note/note.schema'
 import { kbSearchSchema } from './schemas/kb-search.schema'
@@ -10,6 +11,7 @@ import { kbLinksSchema } from './schemas/kb-links.schema'
 import { kbListSchema } from './schemas/kb-list.schema'
 import { kbCreateSchema } from './schemas/kb-create.schema'
 import { kbUpdateSchema } from './schemas/kb-update.schema'
+import { kbEditSchema } from './schemas/kb-edit.schema'
 import { kbMoveSchema } from './schemas/kb-move.schema'
 import { kbDeleteSchema } from './schemas/kb-delete.schema'
 import { kbCreateBatchSchema } from './schemas/kb-create-batch.schema'
@@ -133,6 +135,17 @@ export class KbTool implements McpTool {
           sensitivity?: string
           visible_to?: string[]
         }) => toSummary(await this.knowledgeService.update(id, patch, base_version, user)),
+      },
+      {
+        name: 'kb_edit',
+        description:
+          'Edit part of a note without resending its whole body. Apply ordered operations — replace (unique or all), ' +
+          'delete, insert_after/insert_before an anchor, append/prepend — matched as literal text. Prefer this over ' +
+          'kb_update for small changes to long notes. A non-unique find/anchor fails unless all=true. Provide ' +
+          'base_version for optimistic locking. Returns a compact confirmation (id, slug, version).',
+        schema: kbEditSchema,
+        handler: async ({ id, base_version, edits }: { id: string; base_version: number; edits: EditOperation[] }) =>
+          toSummary(await this.knowledgeService.edit(id, edits, base_version, user)),
       },
       {
         name: 'kb_move',
