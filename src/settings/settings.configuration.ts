@@ -20,6 +20,23 @@ export default () => ({
     cookieSecure: process.env.COOKIE_SECURE === 'true' || process.env.NODE_ENV === 'production',
     cookieSameSite: process.env.COOKIE_SAME_SITE ?? (process.env.NODE_ENV === 'production' ? 'none' : 'lax'),
   },
+  app: {
+    // Canonical frontend URL for links in emails. FRONTEND_URLS may list several origins (CORS);
+    // email links need exactly one.
+    frontendUrl: (
+      process.env.FRONTEND_URL ||
+      (process.env.FRONTEND_URLS ?? '').split(',')[0] ||
+      'http://localhost:5173'
+    )
+      .trim()
+      .replace(/\/$/, ''),
+  },
+  mail: {
+    // Empty key → emails are logged to the console instead of sent (local development).
+    resendApiKey: process.env.RESEND_API_KEY ?? '',
+    from: process.env.MAIL_FROM || 'Knowledge Hub <onboarding@resend.dev>',
+    salesEmail: process.env.SALES_EMAIL ?? '',
+  },
   aws: {
     region: process.env.AWS_REGION ?? 'us-east-1',
     // AWS_ACCESS_KEY / AWS_SECRET_KEY are the names used across the other services here;

@@ -15,6 +15,7 @@
     "start:debug": "dotenv -e .env.dev -- nest start --debug --watch",
     "start:prod": "node dist/main",
     "format": "prettier --write \"src/**/*.ts\"",
+    "db:unique-email": "tsx scripts/ensure-unique-email.ts",
     "lint": "eslint \"{src,apps,libs}/**/*.ts\"",
     "lint:fix": "eslint \"{src,apps,libs}/**/*.ts\" --fix",
     "test": "pnpm run test:unit",

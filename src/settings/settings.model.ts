@@ -37,3 +37,15 @@ export interface AssetsConfig {
   maxBytes: number
   allowedMimes: string[]
 }
+
+export interface AppConfig {
+  /** Single canonical frontend origin, without trailing slash. */
+  frontendUrl: string
+}
+
+export interface MailConfig {
+  resendApiKey: string
+  from: string
+  /** Inbox that receives sales/upgrade requests. */
+  salesEmail: string
+}

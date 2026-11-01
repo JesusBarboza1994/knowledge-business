@@ -5,6 +5,7 @@ import { CreateUserDto } from './dto/create-user.dto'
 import { InviteUserDto, UpdateUserAccessDto } from './dto/invite-user.dto'
 import { UserRole, UserStatus } from '@/commons/enums'
 import { User } from '@/repository/schemas/user/user.schema'
+import { ErrorCode, errorBody, isDuplicateKeyError } from '@/commons/constants/error-code.constant'
 
 @Injectable()
 export class UsersService {
@@ -14,16 +15,34 @@ export class UsersService {
   ) {}
 
   async create(dto: CreateUserDto) {
-    const existing = await this.userRepository.findByEmail(dto.tenant, dto.email)
-    if (existing) throw new ConflictException(`User "${dto.email}" already exists in tenant "${dto.tenant}"`)
+    await this.assertEmailAvailable(dto.email)
 
     const { password, memberships, ...rest } = dto
     const password_hash = await this.passwordService.hash(password)
-    return this.userRepository.create({
+    return this.createUnique({
       ...rest,
       memberships: memberships.map((m) => ({ ...m, granted_at: new Date() })),
       password_hash,
     })
+  }
+
+  /** An email belongs to a single organization (see GLOBAL_EMAIL_INDEX). */
+  private async assertEmailAvailable(email: string): Promise<void> {
+    if (await this.userRepository.existsByEmail(email)) throw this.emailTaken()
+  }
+
+  /** The unique index is the real guard: two concurrent sign-ups pass the pre-check together. */
+  private async createUnique(data: Partial<User>) {
+    try {
+      return await this.userRepository.create(data)
+    } catch (error) {
+      if (isDuplicateKeyError(error)) throw this.emailTaken()
+      throw error
+    }
+  }
+
+  private emailTaken() {
+    return new ConflictException(errorBody(ErrorCode.EMAIL_TAKEN, 'This email already belongs to an organization'))
   }
 
   async update(tenant: string, email: string, dto: Partial<CreateUserDto>) {
@@ -42,9 +61,8 @@ export class UsersService {
   }
 
   async invite(tenant: string, dto: InviteUserDto, grantedBy: string) {
-    const existing = await this.userRepository.findByEmailAnyStatus(tenant, dto.email)
-    if (existing) throw new ConflictException(`User "${dto.email}" already exists`)
-    return this.userRepository.create({
+    await this.assertEmailAvailable(dto.email)
+    return this.createUnique({
       tenant,
       email: dto.email,
       name: dto.name,
