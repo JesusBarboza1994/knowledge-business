@@ -18,6 +18,16 @@ export class OrganizationRepository {
     return this.model.findOne({ slug, status: 'active' }).exec()
   }
 
+  /** Any status: the slug stays reserved by the unique index even after archiving. */
+  async existsBySlug(slug: string): Promise<boolean> {
+    return (await this.model.exists({ slug })) !== null
+  }
+
+  /** Compensation for a sign-up whose admin user could not be created. */
+  async deleteById(id: string): Promise<void> {
+    await this.model.deleteOne({ _id: id }).exec()
+  }
+
   async findById(id: string): Promise<OrganizationDocument | null> {
     return this.model.findById(id).exec()
   }

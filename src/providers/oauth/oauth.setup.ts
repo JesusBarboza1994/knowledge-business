@@ -12,6 +12,11 @@ const ERROR_PAGES: Record<string, { status: number; message: string; keepNonce: 
   expired: { status: 400, message: 'Sesion expirada. Cierra esta ventana e intenta de nuevo.', keepNonce: false },
   invalid_credentials: { status: 200, message: 'Credenciales invalidas. Intenta de nuevo.', keepNonce: true },
   user_not_found: { status: 200, message: 'Usuario no encontrado.', keepNonce: true },
+  email_not_verified: {
+    status: 200,
+    message: 'Confirma tu correo antes de conectar. Revisa tu bandeja de entrada.',
+    keepNonce: true,
+  },
 }
 
 /**

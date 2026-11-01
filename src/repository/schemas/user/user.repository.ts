@@ -55,6 +55,15 @@ export class UserRepository {
     return this.model.findOne({ email: email.toLowerCase(), status: UserStatus.ACTIVE }).select('+password_hash').exec()
   }
 
+  async findByIdGlobal(id: string): Promise<UserDocument | null> {
+    if (!Types.ObjectId.isValid(id)) return null
+    return this.model.findById(id).exec()
+  }
+
+  async updateByIdGlobal(id: string, data: Partial<User>): Promise<UserDocument | null> {
+    return this.model.findByIdAndUpdate(id, { $set: data }, { new: true }).exec()
+  }
+
   async setPasswordHash(tenant: string, email: string, password_hash: string): Promise<void> {
     await this.model.updateOne({ tenant, email: email.toLowerCase() }, { $set: { password_hash } })
   }

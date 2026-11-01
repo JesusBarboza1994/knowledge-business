@@ -46,6 +46,18 @@ export class User {
 
   @Prop({ default: UserStatus.ACTIVE, enum: Object.values(UserStatus) })
   status: string
+
+  /**
+   * `null` = signed up but has not confirmed the email yet (login is refused).
+   * Missing (users created before self sign-up existed, or by a superadmin) counts as verified.
+   */
+  @Prop({ type: Date, required: false })
+  email_verified_at?: Date | null
+}
+
+/** Only an explicit `null` means unverified — see `email_verified_at`. */
+export function isEmailVerified(user: { email_verified_at?: Date | null }): boolean {
+  return user.email_verified_at !== null
 }
 
 export const UserSchema = SchemaFactory.createForClass(User)

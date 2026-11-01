@@ -7,6 +7,10 @@ export enum ErrorCode {
   EMAIL_TAKEN = 'EMAIL_TAKEN',
   AREA_NOT_FOUND = 'AREA_NOT_FOUND',
   AREA_KEY_TAKEN = 'AREA_KEY_TAKEN',
+  SLUG_TAKEN = 'SLUG_TAKEN',
+  EMAIL_NOT_VERIFIED = 'EMAIL_NOT_VERIFIED',
+  /** Token missing, expired, already used or issued for another purpose — deliberately one code. */
+  TOKEN_INVALID = 'TOKEN_INVALID',
 }
 
 /** Body for a Nest HttpException that carries a business code alongside the human message. */

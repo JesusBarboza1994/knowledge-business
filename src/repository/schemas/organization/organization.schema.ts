@@ -12,6 +12,17 @@ export class Organization {
   @Prop({ required: true, trim: true })
   name: string
 
+  /** What the company does, in its own words (e.g. "fabricación de resortes helicoidales en acero"). */
+  @Prop({ trim: true })
+  description?: string
+
+  /** E.164 country calling code, e.g. "+51". Stored apart from the number so it can be validated/listed. */
+  @Prop({ trim: true })
+  phone_country_code?: string
+
+  @Prop({ trim: true })
+  phone_number?: string
+
   @Prop({ default: OrganizationStatus.ACTIVE, enum: Object.values(OrganizationStatus) })
   status: string
 
