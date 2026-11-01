@@ -23,6 +23,13 @@ export class Organization {
   @Prop({ trim: true })
   phone_number?: string
 
+  /**
+   * `null` = created by self sign-up and the admin has not finished the setup wizard yet.
+   * Missing (organizations created before sign-up existed, or by a superadmin) counts as done.
+   */
+  @Prop({ type: Date, required: false })
+  onboarding_completed_at?: Date | null
+
   @Prop({ default: OrganizationStatus.ACTIVE, enum: Object.values(OrganizationStatus) })
   status: string
 

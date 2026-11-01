@@ -28,6 +28,10 @@ export class OrganizationRepository {
     await this.model.deleteOne({ _id: id }).exec()
   }
 
+  async updateBySlug(slug: string, data: Partial<Organization>): Promise<OrganizationDocument | null> {
+    return this.model.findOneAndUpdate({ slug, status: 'active' }, { $set: data }, { new: true }).exec()
+  }
+
   async findById(id: string): Promise<OrganizationDocument | null> {
     return this.model.findById(id).exec()
   }

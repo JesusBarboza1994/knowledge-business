@@ -7,6 +7,9 @@ import { OAuthClientInformationFull, OAuthTokens } from '@modelcontextprotocol/s
 import { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js'
 import { UserProfile } from '@/tools/user-profile.type'
 import { TokenService } from '@/providers/token/token.service'
+import { UserRepository } from '@/repository/schemas/user/user.repository'
+import { isEmailVerified } from '@/repository/schemas/user/user.schema'
+import { AreaAccess, UserRole, UserStatus } from '@/commons/enums'
 import { renderLoginForm } from './forms/loginPage'
 
 const clients = new Map<string, OAuthClientInformationFull>()
@@ -18,9 +21,40 @@ const pendingAuthorizations = new Map<
   { clientId: string; codeChallenge: string; redirectUri: string; state?: string }
 >()
 let tokenService: TokenService | undefined
+let userRepository: UserRepository | undefined
 
-export function configureOAuthProvider(dependencies: { tokenService: TokenService }) {
+export function configureOAuthProvider(dependencies: { tokenService: TokenService; userRepository: UserRepository }) {
   tokenService = dependencies.tokenService
+  userRepository = dependencies.userRepository
+}
+
+function getUserRepository(): UserRepository {
+  if (!userRepository) throw new Error('OAuth provider has not been configured with UserRepository')
+  return userRepository
+}
+
+/**
+ * The access token only proves who the caller was when Claude connected. Role, areas and status
+ * are re-read here on every MCP request (one indexed lookup, same as SessionAuthGuard does for
+ * the web), so revoking an area or deactivating someone takes effect on the next tool call
+ * instead of when the 30-day token expires.
+ */
+export async function resolveCurrentProfile(claimed: UserProfile): Promise<UserProfile | undefined> {
+  const current = await getUserRepository().findByIdGlobal(claimed.id)
+  if (!current) return undefined
+  if (current.status !== UserStatus.ACTIVE || !isEmailVerified(current)) return undefined
+  if (current.tenant !== claimed.tenant || current.email !== claimed.email) return undefined
+  return {
+    id: current._id.toString(),
+    email: current.email,
+    name: current.name,
+    tenant: current.tenant,
+    role: current.role as UserRole,
+    memberships: (current.memberships ?? []).map((membership) => ({
+      area: membership.area,
+      access: membership.access as AreaAccess,
+    })),
+  }
 }
 
 function getTokenService(): TokenService {
@@ -127,18 +161,25 @@ export const knowledgeOAuthProvider: OAuthServerProvider = {
       throw new InvalidTokenError('Invalid access token')
     }
 
-    console.log('[OAuth] verifyToken OK:', tokenData.user.email)
+    // An invalid token makes the MCP client restart the OAuth flow, which is the right outcome
+    // for a user who was deactivated or moved: they must sign in again to get access back.
+    const current = await resolveCurrentProfile(tokenData.user)
+    if (!current) {
+      console.warn('[OAuth] token owner is no longer active:', tokenData.user.email)
+      throw new InvalidTokenError('User is no longer active')
+    }
+
     return {
       token,
       clientId: MCP_TOKEN_CLIENT_ID,
       scopes: ['mcp'],
       expiresAt: tokenData.expiresAt,
       extra: {
-        id: tokenData.user.id,
-        email: tokenData.user.email,
-        tenant: tokenData.user.tenant,
-        memberships: tokenData.user.memberships,
-        role: tokenData.user.role,
+        id: current.id,
+        email: current.email,
+        tenant: current.tenant,
+        memberships: current.memberships,
+        role: current.role,
       },
     }
   },
