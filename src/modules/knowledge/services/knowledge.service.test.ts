@@ -219,7 +219,7 @@ describe('KnowledgeService archiving', () => {
 
     const result = await service.delete(target._id.toString(), 3, user)
 
-    expect(result).toEqual({ archived: true, pending_connections: 2, updated_notes: 1 })
+    expect(result).toEqual({ archived: true, pending_connections: 2, updated_notes: 1, detached_children: 0 })
     expect(noteRepository.unresolveOutlinks).toHaveBeenCalledWith('mente2', target._id.toString())
     expect(noteRepository.update).not.toHaveBeenCalled()
     expect(nameIndexService.detachEdgesTo).toHaveBeenCalledWith([source._id.toString()], target._id.toString())
@@ -392,5 +392,170 @@ describe('KnowledgeService move', () => {
     const { service } = buildForMove({ source: { kind: 'index' } })
 
     await expect(service.move('id', { area: 'product' }, 1, user)).rejects.toThrow(/System notes/i)
+  })
+})
+
+describe('KnowledgeService main notes', () => {
+  function buildForCreate(options: { existing?: NoteDocument | null; children?: number } = {}) {
+    const noteRepository = {
+      findBySlug: vi.fn().mockResolvedValue(null),
+      findBySlugOrAlias: vi.fn().mockResolvedValue(options.existing ?? null),
+      findAnyBySlugOrAlias: vi.fn().mockResolvedValue(null),
+      findByIds: vi.fn().mockResolvedValue([]),
+      countChildren: vi.fn().mockResolvedValue(options.children ?? 0),
+      create: vi.fn().mockImplementation(async (record: Partial<NoteDocument>) => note(record)),
+      createMany: vi
+        .fn()
+        .mockImplementation(async (records) => records.map((record: Partial<NoteDocument>) => note(record))),
+      findById: vi.fn().mockResolvedValue(options.existing ?? null),
+      update: vi
+        .fn()
+        .mockImplementation(async (_tenant: string, _id: string, data: Partial<NoteDocument>) =>
+          note({ ...(options.existing ?? {}), ...data }),
+        ),
+      findDanglings: vi.fn().mockResolvedValue([]),
+      resolveDangling: vi.fn(),
+      softDelete: vi.fn(),
+      findBacklinks: vi.fn().mockResolvedValue([]),
+      unresolveOutlinks: vi.fn().mockResolvedValue({ sourceIds: [], connections: 0 }),
+    }
+    const noteVersionRepository = {
+      append: vi.fn().mockResolvedValue(undefined),
+      appendMany: vi.fn().mockResolvedValue(undefined),
+    }
+    const areaRepository = {
+      findByKey: vi.fn().mockResolvedValue({ key: 'develop', default_sensitivity: Sensitivity.INTERNAL_AREA }),
+    }
+    const permissionService = {
+      accessTo: vi.fn().mockReturnValue(AreaAccess.WRITE),
+      canEdit: vi.fn().mockReturnValue(true),
+      canManage: vi.fn().mockReturnValue(true),
+      canView: vi.fn().mockReturnValue(true),
+    }
+    const nameIndexService = {
+      resolveSlug: vi.fn().mockReturnValue(undefined),
+      addNote: vi.fn(),
+      updateNote: vi.fn(),
+      removeNote: vi.fn(),
+      detachEdgesTo: vi.fn(),
+      rebuild: vi.fn().mockResolvedValue(undefined),
+    }
+    const assetService = assetServiceStub()
+    const service = new KnowledgeService(
+      noteRepository as never,
+      noteVersionRepository as never,
+      areaRepository as never,
+      permissionService as never,
+      new ParserService(),
+      nameIndexService as never,
+      {} as never,
+      assetService as never,
+    )
+    return { service, noteRepository }
+  }
+
+  it('cuelga la nota de la main declarada y guarda su slug', async () => {
+    const main = note({ slug: 'proyecto-fem', title: 'Proyecto FEM', kind: 'main' })
+    const { service, noteRepository } = buildForCreate({ existing: main })
+
+    await service.create({ area: 'develop', title: 'Calibración', body: 'x', parent: 'Proyecto FEM' }, user)
+
+    expect(noteRepository.create).toHaveBeenCalledWith(expect.objectContaining({ parent: 'proyecto-fem' }))
+  })
+
+  it('acepta una nota sin parent y la deja suelta para que kb_lint la reporte', async () => {
+    const { service, noteRepository } = buildForCreate()
+
+    await service.create({ area: 'develop', title: 'Suelta', body: 'x' }, user)
+
+    expect(noteRepository.create).toHaveBeenCalledWith(expect.objectContaining({ parent: null }))
+  })
+
+  it('rechaza un parent que existe pero no es main', async () => {
+    const regular = note({ slug: 'nota-normal', title: 'Nota normal', kind: 'note' })
+    const { service, noteRepository } = buildForCreate({ existing: regular })
+
+    await expect(
+      service.create({ area: 'develop', title: 'Hija', body: 'x', parent: 'Nota normal' }, user),
+    ).rejects.toThrow(/not a main note/)
+    expect(noteRepository.create).not.toHaveBeenCalled()
+  })
+
+  it('rechaza un parent inexistente en lugar de dejar la nota desconectada en silencio', async () => {
+    const { service, noteRepository } = buildForCreate({ existing: null })
+
+    await expect(
+      service.create({ area: 'develop', title: 'Hija', body: 'x', parent: 'No existe' }, user),
+    ).rejects.toThrow(/does not exist/)
+    expect(noteRepository.create).not.toHaveBeenCalled()
+  })
+
+  it('rechaza que el llamante cree páginas de sistema', async () => {
+    const { service, noteRepository } = buildForCreate()
+
+    await expect(
+      service.create({ area: 'develop', title: 'Falso índice', body: 'x', kind: 'index' as never }, user),
+    ).rejects.toThrow(/reserved for system pages/)
+    expect(noteRepository.create).not.toHaveBeenCalled()
+  })
+
+  it('resuelve el parent dentro del chunk aunque la main llegue después que su hija', async () => {
+    const { service, noteRepository } = buildForCreate()
+
+    await service.createBatch(
+      [
+        { area: 'develop', title: 'Malla', body: 'detalle', parent: 'Proyecto FEM' },
+        { area: 'develop', title: 'Proyecto FEM', body: 'rama', kind: 'main' as never },
+      ],
+      user,
+    )
+
+    const records = noteRepository.createMany.mock.calls[0][0] as Array<{ slug: string; parent: string | null }>
+    expect(records.find((record) => record.slug === 'malla')?.parent).toBe('proyecto-fem')
+    expect(records.find((record) => record.slug === 'proyecto-fem')?.parent).toBeNull()
+  })
+
+  it('degrada una main con hijas sin bloquear: sigue siendo una nota como cualquier otra', async () => {
+    const main = note({ slug: 'proyecto-fem', title: 'Proyecto FEM', kind: 'main', version: 1 })
+    const { service, noteRepository } = buildForCreate({ existing: main, children: 3 })
+
+    const updated = await service.update('id', { kind: 'note' as never }, 1, user)
+
+    expect(updated.kind).toBe('note')
+    expect(noteRepository.update).toHaveBeenCalledWith('mente2', 'id', expect.objectContaining({ kind: 'note' }))
+  })
+
+  it('archiva una main y reporta cuántas notas quedaron colgando de un slug muerto', async () => {
+    const main = note({ slug: 'proyecto-fem', title: 'Proyecto FEM', kind: 'main', version: 1 })
+    const { service, noteRepository } = buildForCreate({ existing: main, children: 2 })
+
+    const result = await service.delete('id', 1, user)
+
+    expect(result).toMatchObject({ archived: true, detached_children: 2 })
+    expect(noteRepository.softDelete).toHaveBeenCalledOnce()
+  })
+
+  it('no cuenta hijas al archivar una nota regular', async () => {
+    const regular = note({ slug: 'nota-normal', title: 'Nota normal', kind: 'note', version: 1 })
+    const { service, noteRepository } = buildForCreate({ existing: regular, children: 5 })
+
+    const result = await service.delete('id', 1, user)
+
+    expect(result.detached_children).toBe(0)
+    expect(noteRepository.countChildren).not.toHaveBeenCalled()
+  })
+
+  it('no restringe los [[links]] de una main: se conecta como cualquier nota', async () => {
+    const main = note({ slug: 'proyecto-fem', title: 'Proyecto FEM', kind: 'main' })
+    const { service, noteRepository } = buildForCreate({ existing: main })
+
+    await service.create(
+      { area: 'develop', title: 'Otra rama', body: 'Cruza con [[Proyecto FEM]].', kind: 'main' as never },
+      user,
+    )
+
+    const record = noteRepository.create.mock.calls[0][0] as { kind: string; unresolved: unknown[] }
+    expect(record.kind).toBe('main')
+    expect(record.unresolved).toHaveLength(1)
   })
 })

@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { createZodDto } from 'nestjs-zod'
-import { LinkDirection, Sensitivity } from '@/commons/enums'
+import { LinkDirection, Sensitivity, WRITABLE_NOTE_KINDS } from '@/commons/enums'
 
 export class ListNotesQueryDto extends createZodDto(
   z.object({
@@ -32,6 +32,8 @@ export class CreateNoteHttpDto extends createZodDto(
     area: z.string().min(1).max(40),
     title: z.string().min(1).max(200),
     body: z.string().max(2_000_000),
+    kind: z.enum(WRITABLE_NOTE_KINDS).optional(),
+    parent: z.string().max(200).nullable().optional(),
     sensitivity: z.nativeEnum(Sensitivity).optional(),
     visible_to: z.array(z.string()).optional(),
   }),
@@ -42,6 +44,8 @@ export class UpdateNoteHttpDto extends createZodDto(
     base_version: z.number().int().positive(),
     title: z.string().min(1).max(200).optional(),
     body: z.string().max(2_000_000).optional(),
+    kind: z.enum(WRITABLE_NOTE_KINDS).optional(),
+    parent: z.string().max(200).nullable().optional(),
     sensitivity: z.nativeEnum(Sensitivity).optional(),
     visible_to: z.array(z.string()).optional(),
   }),

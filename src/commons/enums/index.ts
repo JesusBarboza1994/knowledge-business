@@ -25,14 +25,28 @@ export enum Sensitivity {
 }
 
 /**
- * NOTE — regular knowledge note.
+ * NOTE — regular knowledge note. Hangs from a MAIN note via `parent`.
+ * MAIN — a main branch of the area: a top-level subject the index lists by default.
+ *        Everything else in the area is reached by drilling into one of these.
  * INDEX — the area's Map of Content (navigation entry point); one per area.
  * LOG — the area's append-only activity log; one per area.
  */
 export enum NoteKind {
   NOTE = 'note',
+  MAIN = 'main',
   INDEX = 'index',
   LOG = 'log',
+}
+
+/**
+ * Kinds a caller may create or assign. INDEX and LOG are scaffolded by the server, one per
+ * area, and must never be minted by an agent — a second index would split navigation in two.
+ */
+export const WRITABLE_NOTE_KINDS = [NoteKind.NOTE, NoteKind.MAIN] as const
+
+/** System pages are area-scoped singletons: they cannot be moved between areas nor deleted. */
+export function isSystemKind(kind: string): boolean {
+  return kind === NoteKind.INDEX || kind === NoteKind.LOG
 }
 
 /** Lifecycle of content records (notes, areas). */

@@ -3,7 +3,7 @@ import { McpTool, ToolDefinition } from '../tool.interface'
 import { UserProfile } from '../user-profile.type'
 import { BatchCreateNoteData, KnowledgeService } from '@/modules/knowledge/services/knowledge.service'
 import { EditOperation } from '@/modules/knowledge/services/note-edit.util'
-import { LinkDirection } from '@/commons/enums'
+import { LinkDirection, NoteKind } from '@/commons/enums'
 import { NoteDocument } from '@/repository/schemas/note/note.schema'
 import { kbSearchSchema } from './schemas/kb-search.schema'
 import { kbGetSchema } from './schemas/kb-get.schema'
@@ -32,6 +32,7 @@ function toSummary(note: NoteDocument) {
     slug: note.slug,
     area: note.area,
     kind: note.kind,
+    parent: note.parent ?? null,
     title: note.title,
     version: note.version,
     sensitivity: note.sensitivity,
@@ -50,7 +51,7 @@ export class KbTool implements McpTool {
       {
         name: 'kb_home',
         description:
-          "Navigation entry point — call FIRST in a session. Returns your accessible areas with access level (read/write/manage) and the slug of each area's index (Map of Content) and activity log. Read the relevant index with kb_get, then follow [[links]] to drill into notes. Prefer this over blind kb_search.",
+          "Navigation entry point — call FIRST in a session. Returns your accessible areas with access level (read/write/manage), the slug of each area's index (Map of Content) and activity log, and its main notes — the main branches everything else hangs from. Read the relevant index with kb_get, then drill into a main note and follow [[links]]. Prefer this over blind kb_search.",
         schema: {},
         handler: async () => this.knowledgeService.home(user),
       },
@@ -88,19 +89,28 @@ export class KbTool implements McpTool {
       },
       {
         name: 'kb_list',
-        description: 'List notes metadata (no body). Filtered by caller permissions.',
+        description:
+          'List notes metadata (no body). Filtered by caller permissions. Use kind: "main" to see an area\'s main branches, parent: "<main-slug>" to see what hangs from one, or orphans: true to find notes attached to no branch.',
         schema: kbListSchema,
-        handler: async ({ limit }: { limit?: number }) => this.knowledgeService.list(user, limit),
+        handler: async (filter: {
+          limit?: number
+          area?: string
+          kind?: NoteKind
+          parent?: string
+          orphans?: boolean
+        }) => this.knowledgeService.list(user, filter),
       },
       {
         name: 'kb_create',
         description:
-          'Create a new note. Use [[Title]] in body for internal links. Returns a compact confirmation (id, slug, version) — not the full note body.',
+          'Create a new note. Use [[Title]] in body for internal links. Set parent to the main note this one belongs under; set kind: "main" to open a new main branch of the area. Returns a compact confirmation (id, slug, version) — not the full note body.',
         schema: kbCreateSchema,
         handler: async (data: {
           area: string
           title: string
           body: string
+          kind?: NoteKind
+          parent?: string
           sensitivity?: string
           visible_to?: string[]
         }) => toSummary(await this.knowledgeService.create(data, user)),
@@ -108,7 +118,7 @@ export class KbTool implements McpTool {
       {
         name: 'kb_create_batch',
         description:
-          'Create a prevalidated chunk of up to 25 notes. Resolves [[links]] between notes in the same chunk directly, regardless of input order, and also links to existing notes by slug or alias. Returns compact note summaries and connection counts.',
+          'Create a prevalidated chunk of up to 25 notes. Resolves [[links]] and parent references between notes in the same chunk directly, regardless of input order, and also links to existing notes by slug or alias — so a main note and everything hanging from it can ship together. Returns compact note summaries and connection counts.',
         schema: kbCreateBatchSchema,
         handler: async ({ notes }: { notes: BatchCreateNoteData[] }) => {
           const result = await this.knowledgeService.createBatch(notes, user)
@@ -121,7 +131,7 @@ export class KbTool implements McpTool {
       {
         name: 'kb_update',
         description:
-          'Update an existing note. Provide base_version for optimistic locking. Returns a compact confirmation (id, slug, version) — not the full note body.',
+          'Update an existing note. Also reattaches it to another main note (parent) or promotes it to a main branch (kind). Provide base_version for optimistic locking. Returns a compact confirmation (id, slug, version) — not the full note body.',
         schema: kbUpdateSchema,
         handler: async ({
           id,
@@ -132,6 +142,8 @@ export class KbTool implements McpTool {
           base_version: number
           body?: string
           title?: string
+          kind?: NoteKind
+          parent?: string | null
           sensitivity?: string
           visible_to?: string[]
         }) => toSummary(await this.knowledgeService.update(id, patch, base_version, user)),
@@ -167,7 +179,7 @@ export class KbTool implements McpTool {
       {
         name: 'kb_delete',
         description:
-          'Archive a note. Inbound [[links]] stay in place as pending, so recreating the note under the same name restores them. Requires manage access and base_version for optimistic locking.',
+          'Archive a note. Inbound [[links]] stay in place as pending, and notes hanging from it keep pointing at it, so recreating the note under the same name restores both. Reports detached_children when the archived note was a main. Requires manage access and base_version for optimistic locking.',
         schema: kbDeleteSchema,
         handler: async ({ id, base_version }: { id: string; base_version: number }) =>
           this.knowledgeService.delete(id, base_version, user),

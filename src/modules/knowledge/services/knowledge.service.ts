@@ -11,7 +11,15 @@ import { NoteVersionRepository } from '@/repository/schemas/note-version/note-ve
 import { AreaRepository } from '@/repository/schemas/area/area.repository'
 import { AreaDocument } from '@/repository/schemas/area/area.schema'
 import { UserProfile, isTenantAdmin, readableAreas } from '@/tools/user-profile.type'
-import { AreaAccess, ContentStatus, LinkDirection, NoteKind, Sensitivity } from '@/commons/enums'
+import {
+  AreaAccess,
+  ContentStatus,
+  LinkDirection,
+  NoteKind,
+  Sensitivity,
+  WRITABLE_NOTE_KINDS,
+  isSystemKind,
+} from '@/commons/enums'
 import { PermissionService } from './permission.service'
 import { ParserService } from './parser.service'
 import { NameIndexService, Edge } from './name-index.service'
@@ -30,16 +38,18 @@ function normalizeSlug(title: string): string {
 // ─── System page templates (area scaffold) ──────────────────────────────────
 
 function indexTemplate(areaName: string): string {
-  return `> ⚙️ System page — **Map of Content** for the "${areaName}" area. This is the entry point for navigation: every note in this area should be reachable from here.
+  return `> ⚙️ System page — **Map of Content** for the "${areaName}" area. This index lists the area's **main notes**: its main branches. Every other note hangs from one of them, so everything stays reachable without listing everything here.
 
 ## How to maintain this index
-- One entry per note: \`- [[Note Title]] — one-line summary of what it contains.\`
-- Group entries under thematic \`##\` headings; create/rename headings as topics evolve.
-- Update this index **every time** you create, rename, or archive a note in this area.
+- One entry per **main note** (\`kind: "main"\`): \`- [[Main Note Title]] — one-line summary of the branch.\`
+- Regular notes are **not** listed here: they declare \`parent: "<main-slug>"\` and are linked from that main note instead.
+- Group main notes under thematic \`##\` headings; create/rename headings as the area's subjects evolve.
+- Create a new main note only for a genuinely new subject of the area — if an existing branch covers it, hang the note there.
+- Update this index **every time** you create, rename, or archive a main note.
 - Keep it curated, not exhaustive prose: it is a map, not an article.
 
-## Topics
-_(no notes indexed yet — when you first work in this area, list existing notes with kb_list and populate this index)_
+## Main branches
+_(no main notes yet — when you first work in this area, review existing notes with kb_list, decide the area's main branches, create them as \`kind: "main"\` and list them here)_
 `
 }
 
@@ -58,12 +68,14 @@ export interface CreateNoteData {
   body: string
   sensitivity?: string
   visible_to?: string[]
+  kind?: NoteKind
+  /** Title, slug or alias of the MAIN note this one hangs from. */
+  parent?: string | null
 }
 
 export interface BatchCreateNoteData extends CreateNoteData {
   slug?: string
   aliases?: string[]
-  kind?: NoteKind
 }
 
 export interface BatchCreateResult {
@@ -82,6 +94,10 @@ export interface UpdateNotePatch {
   title?: string
   sensitivity?: string
   visible_to?: string[]
+  /** Promote a note to a main branch, or demote it back. Never index/log. */
+  kind?: NoteKind
+  /** Reattach under another MAIN note; null detaches it. */
+  parent?: string | null
 }
 
 export interface MoveNotePatch {
@@ -100,6 +116,14 @@ export interface ListNotesOptions {
   area?: string
   limit?: number
   includeBody?: boolean
+}
+
+export interface ListFilter {
+  area?: string
+  limit?: number
+  kind?: NoteKind
+  parent?: string
+  orphans?: boolean
 }
 
 export interface ListNotesResult {
@@ -157,6 +181,7 @@ export class KnowledgeService {
       access: string
       index: string
       log: string
+      mains: { slug: string; title: string }[]
     }[]
   }> {
     const allAreas = await this.areaRepository.findAllByTenant(user.tenant)
@@ -165,6 +190,9 @@ export class KnowledgeService {
     const areas = await Promise.all(
       accessible.map(async (a) => {
         const scaffold = await this.ensureAreaScaffold(a, user)
+        const mains = (await this.noteRepository.findRootMains(user.tenant, a.key)).filter((note) =>
+          this.permissionService.canView(user, note),
+        )
         return {
           key: a.key,
           name: a.name,
@@ -172,6 +200,7 @@ export class KnowledgeService {
           access: this.permissionService.accessTo(user, a.key),
           index: scaffold.index,
           log: scaffold.log,
+          mains: mains.map((note) => ({ slug: note.slug, title: note.title })),
         }
       }),
     )
@@ -429,9 +458,9 @@ export class KnowledgeService {
     return { out: keep(out), in: keep(inn) }
   }
 
-  async list(user: UserProfile, limit = 50): Promise<NoteDocument[]> {
+  async list(user: UserProfile, filter: ListFilter = {}): Promise<NoteDocument[]> {
     const areas = await this.resolveReadableAreas(user)
-    return this.noteRepository.list(user.tenant, areas, undefined, limit)
+    return this.noteRepository.list(user.tenant, areas, { ...filter, limit: filter.limit ?? 50 })
   }
 
   /**
@@ -545,6 +574,7 @@ export class KnowledgeService {
       slug: note.slug,
       title: note.title,
       kind: note.kind,
+      parent: note.parent ?? null,
       aliases: note.aliases ?? [],
       ...(body === undefined ? {} : { body }),
       sensitivity: note.sensitivity,
@@ -587,16 +617,66 @@ export class KnowledgeService {
 
   // ─── WRITE ───────────────────────────────────────────────────────────────
 
+  /**
+   * A caller may only mint `note` or `main`. The index and the log are area-scoped singletons
+   * scaffolded by the server; a second one would fork navigation with no way to tell which is real.
+   */
+  private assertWritableKind(kind: NoteKind | undefined, title: string): void {
+    if (kind && !WRITABLE_NOTE_KINDS.includes(kind as (typeof WRITABLE_NOTE_KINDS)[number])) {
+      throw new BadRequestException(
+        `Note "${title}": kind "${kind}" is reserved for system pages — use "note" or "main"`,
+      )
+    }
+  }
+
+  /**
+   * Resolves a declared parent to the slug of an existing MAIN note.
+   *
+   * Deliberately asymmetric: **omitting** a parent is allowed — the note is simply unattached and
+   * kb_lint reports it — but a parent that is present and wrong is rejected. A typo'd parent is
+   * worse than no parent: it reads as attached while being reachable from nothing.
+   *
+   * `candidates` carries the notes of the current batch, so a chunk can declare its own main note
+   * as parent regardless of the order the notes arrive in.
+   */
+  private async resolveParent(
+    parent: string | null | undefined,
+    ownSlug: string,
+    tenant: string,
+    candidates?: Map<string, { slug: string; kind: string }>,
+  ): Promise<string | null> {
+    if (parent === undefined || parent === null || parent.trim() === '') return null
+
+    const ref = normalizeSlug(parent)
+    if (!ref) throw new BadRequestException(`Cannot derive a parent reference from "${parent}"`)
+    if (ref === ownSlug) throw new BadRequestException(`A note cannot be its own parent ("${ownSlug}")`)
+
+    const inBatch = candidates?.get(ref)
+    const target = inBatch ?? (await this.noteRepository.findBySlugOrAlias(tenant, ref))
+    if (!target) {
+      throw new BadRequestException(`Parent note "${parent}" does not exist — create the main note first`)
+    }
+    if (target.kind !== NoteKind.MAIN) {
+      throw new BadRequestException(
+        `Parent note "${parent}" is a "${target.kind}", not a main note — notes can only hang from kind "main"`,
+      )
+    }
+    return target.slug
+  }
+
   async create(data: CreateNoteData, user: UserProfile): Promise<NoteDocument> {
     const access = this.permissionService.accessTo(user, data.area)
     if (access !== AreaAccess.WRITE && access !== AreaAccess.MANAGE) {
       throw new ForbiddenException('Insufficient permissions to create notes in this area')
     }
 
+    this.assertWritableKind(data.kind, data.title)
+
     const areaDoc = await this.areaRepository.findByKey(user.tenant, data.area)
     const sensitivity = data.sensitivity ?? areaDoc?.default_sensitivity ?? Sensitivity.PUBLIC_ORG
+    const parent = await this.resolveParent(data.parent, normalizeSlug(data.title), user.tenant)
 
-    return this.insertNote({ ...data, sensitivity }, user)
+    return this.insertNote({ ...data, sensitivity, parent }, user)
   }
 
   async createBatch(data: BatchCreateNoteData[], user: UserProfile): Promise<BatchCreateResult> {
@@ -614,6 +694,7 @@ export class KnowledgeService {
     }
 
     const drafts = data.map((note) => {
+      this.assertWritableKind(note.kind, note.title)
       const slug = normalizeSlug(note.slug ?? note.title)
       if (!slug) throw new BadRequestException(`Cannot derive a slug for note "${note.title}"`)
       const aliases = [...new Set((note.aliases ?? []).map(normalizeSlug).filter((alias) => alias && alias !== slug))]
@@ -622,6 +703,7 @@ export class KnowledgeService {
         data: note,
         slug,
         aliases,
+        kind: note.kind ?? NoteKind.NOTE,
         parsed: this.parserService.parse(note.body),
         sensitivity: note.sensitivity ?? areas.get(note.area)?.default_sensitivity ?? Sensitivity.PUBLIC_ORG,
       }
@@ -646,6 +728,21 @@ export class KnowledgeService {
     )
     const collision = existingNames.find((entry) => entry.note)
     if (collision) throw new ConflictException(`A note already uses slug or alias "${collision.name}"`)
+
+    /**
+     * Parents are resolved against the chunk first, so a batch can ship a main note together with
+     * the notes hanging from it in any order — the same guarantee createBatch already gives [[links]].
+     */
+    const parentCandidates = new Map(
+      [...draftByName].map(([name, draft]) => [name, { slug: draft.slug, kind: draft.kind }]),
+    )
+    const parentBySlug = new Map<string, string | null>()
+    for (const draft of drafts) {
+      parentBySlug.set(
+        draft.slug,
+        await this.resolveParent(draft.data.parent, draft.slug, user.tenant, parentCandidates),
+      )
+    }
 
     const existingTargetIdByName = new Map<string, string>()
     for (const draft of drafts) {
@@ -700,7 +797,8 @@ export class KnowledgeService {
         area: draft.data.area,
         slug: draft.slug,
         title: draft.data.title,
-        kind: draft.data.kind ?? NoteKind.NOTE,
+        kind: draft.kind,
+        parent: parentBySlug.get(draft.slug) ?? null,
         aliases: draft.aliases,
         body: draft.data.body,
         sensitivity: draft.sensitivity,
@@ -784,7 +882,12 @@ export class KnowledgeService {
    * ensureAreaScaffold() uses it to create system pages (index/log) on behalf of the system.
    */
   private async insertNote(
-    data: CreateNoteData & { sensitivity: string; slug?: string; kind?: string },
+    data: Omit<CreateNoteData, 'kind' | 'parent'> & {
+      sensitivity: string
+      slug?: string
+      kind?: string
+      parent?: string | null
+    },
     user: UserProfile,
   ): Promise<NoteDocument> {
     const slug = data.slug ?? normalizeSlug(data.title)
@@ -820,6 +923,7 @@ export class KnowledgeService {
       slug,
       title: data.title,
       kind: data.kind ?? NoteKind.NOTE,
+      parent: data.parent ?? null,
       aliases: [],
       body: data.body,
       sensitivity: data.sensitivity,
@@ -885,10 +989,28 @@ export class KnowledgeService {
     if (!this.permissionService.canEdit(user, note)) throw new ForbiddenException()
     if (note.version !== baseVersion) throw new ConflictException('Version conflict — reload and retry')
 
+    const { kind, parent, ...rest } = patch
+
     const updateData: Partial<Note> = {
-      ...patch,
+      ...rest,
       version: note.version + 1,
       updated_by: new Types.ObjectId(user.id),
+    }
+
+    /**
+     * Re-kinding is limited to the note ↔ main axis: the index and the log stay what they are, and
+     * nothing else can become one of them. Demoting a main that still carries children is allowed —
+     * a main is a note like any other, and the children stay reachable through it; kb_lint reports
+     * the branch as pointing at a non-main so it can be re-filed deliberately.
+     */
+    if (kind !== undefined && kind !== note.kind) {
+      this.assertWritableKind(kind, note.title)
+      if (isSystemKind(note.kind)) throw new BadRequestException('System notes cannot change kind')
+      updateData.kind = kind
+    }
+
+    if (parent !== undefined) {
+      updateData.parent = await this.resolveParent(parent, note.slug, user.tenant)
     }
 
     /**
@@ -992,7 +1114,7 @@ export class KnowledgeService {
     }
 
     if (patch.area !== undefined && patch.area !== note.area) {
-      if (note.kind !== NoteKind.NOTE) throw new ForbiddenException('System notes cannot be moved between areas')
+      if (isSystemKind(note.kind)) throw new ForbiddenException('System notes cannot be moved between areas')
       const target = await this.areaRepository.findByKey(user.tenant, patch.area)
       if (!target) throw new NotFoundException(`Area not found: ${patch.area}`)
       if (!this.permissionService.canWriteTo(user, target.key)) {
@@ -1080,19 +1202,32 @@ export class KnowledgeService {
    * Archives a note and leaves every inbound [[wikilink]] in place as a pending one, so the
    * graph rebuilds itself if the note is recreated under the same name. The source texts are
    * never rewritten — only the derived edges change.
+   *
+   * A main note archives like any other. Its children keep pointing at its slug, exactly as
+   * inbound links keep pointing at its name: recreating the main restores the whole branch.
+   * The count of children left hanging is reported so the caller can re-file them instead of
+   * discovering the gap later through kb_lint.
    */
   async delete(
     id: string,
     baseVersion: number,
     user: UserProfile,
-  ): Promise<{ archived: true; pending_connections: number; updated_notes: number }> {
+  ): Promise<{
+    archived: true
+    pending_connections: number
+    updated_notes: number
+    detached_children: number
+  }> {
     const note = await this.noteRepository.findById(user.tenant, id)
     if (!note) throw new NotFoundException()
     if (!this.permissionService.canManage(user, note.area)) {
       throw new ForbiddenException('Manage access is required to delete notes')
     }
-    if (note.kind !== NoteKind.NOTE) throw new ForbiddenException('System notes cannot be deleted')
+    if (isSystemKind(note.kind)) throw new ForbiddenException('System notes cannot be deleted')
     if (note.version !== baseVersion) throw new ConflictException('Version conflict')
+
+    const detachedChildren =
+      note.kind === NoteKind.MAIN ? await this.noteRepository.countChildren(user.tenant, note.slug) : 0
 
     const backlinks = (await this.noteRepository.findBacklinks(user.tenant, id)).filter(
       (source) => source._id.toString() !== id,
@@ -1115,6 +1250,7 @@ export class KnowledgeService {
       archived: true,
       pending_connections: connections,
       updated_notes: sourceIds.length,
+      detached_children: detachedChildren,
     }
   }
 }

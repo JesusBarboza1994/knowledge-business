@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common'
 import { InjectModel } from '@nestjs/mongoose'
 import { FilterQuery, Model, Types } from 'mongoose'
 import { Note, NoteDocument, Outlink } from './note.schema'
-import { ContentStatus, Sensitivity } from '@/commons/enums'
+import { ContentStatus, NoteKind, Sensitivity } from '@/commons/enums'
 
 export interface NoteSearchFilter {
   tenant: string
@@ -18,12 +18,22 @@ export interface ListDetailedOptions {
   includeBody?: boolean
 }
 
+export interface ListOptions {
+  area?: string
+  limit?: number
+  kind?: string
+  /** Slug of a MAIN note: returns only the notes hanging from it. */
+  parent?: string
+  /** Only notes with no `parent` — the ones kb_lint reports as unattached. */
+  orphans?: boolean
+}
+
 /** Projection covering everything the permission checks and link metadata need — never the body. */
 export const NOTE_REFERENCE_FIELDS = 'tenant area slug title sensitivity visible_to'
 
 /** Note fields the workspace map needs: identity, permissions and connections, without any content. */
 const NOTE_MAP_FIELDS =
-  'tenant area slug title kind aliases sensitivity visible_to version updated_at updated_by outlinks unresolved'
+  'tenant area slug title kind parent aliases sensitivity visible_to version updated_at updated_by outlinks unresolved'
 
 @Injectable()
 export class NoteRepository {
@@ -113,11 +123,35 @@ export class NoteRepository {
   }
 
   /** List notes metadata with permission pre-filter */
-  async list(tenant: string, areas: string[], area?: string, limit = 50): Promise<NoteDocument[]> {
+  async list(tenant: string, areas: string[], options: ListOptions = {}): Promise<NoteDocument[]> {
+    const { area, limit = 50, kind, parent, orphans } = options
+    const filter = this.scopeFilter(tenant, areas, area)
+    if (kind) filter.kind = kind
+    if (parent) filter.parent = parent
+    // Notes predating the `parent` field have no key at all, hence the $in rather than a null match.
+    if (orphans) filter.parent = { $in: [null, ''] }
     return this.model
-      .find(this.scopeFilter(tenant, areas, area))
+      .find(filter)
       .limit(limit)
-      .select('tenant area slug title sensitivity version updated_at')
+      .select('tenant area slug title kind parent sensitivity visible_to version updated_at')
+      .exec()
+  }
+
+  /**
+   * The area's main branches: the MAIN notes that hang from nothing, which is exactly what the
+   * area index lists. Sub-branches (a MAIN with a parent) are reached from their own parent.
+   */
+  async findRootMains(tenant: string, area: string): Promise<NoteDocument[]> {
+    return this.model
+      .find({
+        tenant,
+        area,
+        kind: NoteKind.MAIN,
+        status: ContentStatus.ACTIVE,
+        parent: { $in: [null, ''] },
+      })
+      .select('tenant area slug title kind parent sensitivity visible_to')
+      .sort({ title: 1 })
       .exec()
   }
 
@@ -150,6 +184,11 @@ export class NoteRepository {
       }>([{ $match: this.scopeFilter(tenant, areas) }, { $group: { _id: '$area', count: { $sum: 1 } } }])
       .exec()
     return Object.fromEntries(rows.map((row) => [row._id, row.count]))
+  }
+
+  /** How many live notes hang from a main note — guards demoting a branch that still carries children. */
+  async countChildren(tenant: string, parentSlug: string): Promise<number> {
+    return this.model.countDocuments({ tenant, parent: parentSlug, status: ContentStatus.ACTIVE }).exec()
   }
 
   async update(tenant: string, id: string, data: Partial<Note>): Promise<NoteDocument | null> {

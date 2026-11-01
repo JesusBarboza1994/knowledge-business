@@ -51,6 +51,17 @@ export class Note {
   @Prop({ default: NoteKind.NOTE, enum: Object.values(NoteKind) })
   kind: string
 
+  /**
+   * Slug of the MAIN note this one hangs from — the backbone the index navigates by.
+   *
+   * Stored as a slug, not an ObjectId, for the same reason links are name-based: the slug is
+   * stable across renames and area moves, and it survives the parent being archived and
+   * recreated. Null is a legitimate state (a top-level main, or a note not yet attached to a
+   * branch); kb_lint reports the latter as an orphan rather than the server rejecting it.
+   */
+  @Prop({ type: String, default: null, trim: true, lowercase: true })
+  parent: string | null
+
   @Prop({ type: [String], default: [] })
   aliases: string[]
 
@@ -105,6 +116,7 @@ NoteSchema.index({ tenant: 1, status: 1, updated_at: -1 })
 NoteSchema.index({ tenant: 1, aliases: 1 })
 NoteSchema.index({ tenant: 1, area: 1, sensitivity: 1 })
 NoteSchema.index({ tenant: 1, area: 1, kind: 1 })
+NoteSchema.index({ tenant: 1, parent: 1 })
 NoteSchema.index({ tenant: 1, 'outlinks.target_id': 1 })
 NoteSchema.index({ tenant: 1, 'unresolved.name': 1 })
 NoteSchema.index(
