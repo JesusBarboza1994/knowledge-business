@@ -3,7 +3,7 @@ import { getBrandLogoUrl } from '@/branding/brand'
 
 const BASE_SERVER_INFO: Implementation = {
   name: 'knowledge-hub',
-  title: 'KnowHub',
+  title: 'Knowledge Hub',
   version: '1.0.0',
   description: 'Memoria confiable y conocimiento conectado para organizaciones.',
 }

@@ -75,7 +75,12 @@ describe('AccountService.signup', () => {
     const result = await service.signup(signup)
 
     expect(organizationRepository.create).toHaveBeenCalledWith(
-      expect.objectContaining({ slug: 'resortes-acme', plan: OrganizationPlan.FREE, phone_country_code: '+51' }),
+      expect.objectContaining({
+        slug: 'resortes-acme',
+        plan: OrganizationPlan.FREE,
+        phone_country_code: '+51',
+        onboarding_completed_at: null,
+      }),
     )
     expect(userRepository.create).toHaveBeenCalledWith(
       expect.objectContaining({ role: UserRole.ADMIN, status: UserStatus.ACTIVE, email_verified_at: null }),

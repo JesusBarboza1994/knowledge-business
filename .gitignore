@@ -58,3 +58,6 @@ yarn.lock
 # Local maintenance/migration scripts: one-off tooling run by hand against a database,
 # not part of the deployed app.
 scripts/
+
+# Snapshots locales de scripts
+/scripts/output

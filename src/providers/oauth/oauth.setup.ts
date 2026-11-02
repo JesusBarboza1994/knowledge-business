@@ -6,6 +6,7 @@ import { renderError } from './forms/errorPage'
 import { renderSuccess } from './forms/successPage'
 import { OAuthLoginService } from '@/modules/auth/oauth-login.service'
 import { TokenService } from '@/providers/token/token.service'
+import { UserRepository } from '@/repository/schemas/user/user.repository'
 
 const ERROR_PAGES: Record<string, { status: number; message: string; keepNonce: boolean }> = {
   invalid_data: { status: 400, message: 'Datos invalidos. Cierra esta ventana e intenta de nuevo.', keepNonce: false },
@@ -30,7 +31,7 @@ const ERROR_PAGES: Record<string, { status: number; message: string; keepNonce: 
  *   knowledgeOAuthProvider.authorize).
  */
 export function setupOAuth(app: INestApplication, issuerUrl: URL): void {
-  configureOAuthProvider({ tokenService: app.get(TokenService) })
+  configureOAuthProvider({ tokenService: app.get(TokenService), userRepository: app.get(UserRepository) })
 
   app.use(
     mcpAuthRouter({
@@ -38,7 +39,7 @@ export function setupOAuth(app: INestApplication, issuerUrl: URL): void {
       issuerUrl,
       resourceServerUrl: new URL('/mcp', issuerUrl),
       scopesSupported: ['mcp'],
-      resourceName: 'Knowledge Hub MCP Server',
+      resourceName: 'Knowledge Hub',
     }),
   )
 

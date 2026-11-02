@@ -103,6 +103,7 @@ export class AccountService {
         phone_number: dto.phone_number,
         plan: OrganizationPlan.FREE,
         status: OrganizationStatus.ACTIVE,
+        onboarding_completed_at: null,
       })
     } catch (error) {
       if (isDuplicateKeyError(error)) throw this.slugTaken(dto.slug)
