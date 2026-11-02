@@ -1,6 +1,7 @@
 import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common'
 import { UserRepository } from '@/repository/schemas/user/user.repository'
 import { PasswordService } from '@/providers/password/password.service'
+import { AccountService } from '@/modules/auth/account.service'
 import { CreateUserDto } from './dto/create-user.dto'
 import { InviteUserDto, UpdateUserAccessDto } from './dto/invite-user.dto'
 import { UserRole, UserStatus } from '@/commons/enums'
@@ -12,6 +13,7 @@ export class UsersService {
   constructor(
     private readonly userRepository: UserRepository,
     private readonly passwordService: PasswordService,
+    private readonly accountService: AccountService,
   ) {}
 
   async create(dto: CreateUserDto) {
@@ -60,9 +62,10 @@ export class UsersService {
     return this.userRepository.findAllByTenant(tenant)
   }
 
-  async invite(tenant: string, dto: InviteUserDto, grantedBy: string) {
+  /** Creates the user as INVITED and emails the link to set a password and join. */
+  async invite(tenant: string, dto: InviteUserDto, inviter: { email: string; name?: string }) {
     await this.assertEmailAvailable(dto.email)
-    return this.createUnique({
+    const user = await this.createUnique({
       tenant,
       email: dto.email,
       name: dto.name,
@@ -71,9 +74,18 @@ export class UsersService {
       memberships: dto.memberships.map((membership) => ({
         ...membership,
         granted_at: new Date(),
-        granted_by: grantedBy,
+        granted_by: inviter.email,
       })),
     })
+    const invitation_sent = await this.accountService.sendInvitation(user, inviter.name ?? inviter.email)
+    return { ...user.toJSON(), invitation_sent }
+  }
+
+  async resendInvitation(tenant: string, id: string, inviter: { email: string; name?: string }) {
+    const user = await this.userRepository.findById(tenant, id)
+    if (!user) throw new NotFoundException('User not found')
+    if (user.status !== UserStatus.INVITED) throw new ConflictException('The user already accepted the invitation')
+    return { invitation_sent: await this.accountService.sendInvitation(user, inviter.name ?? inviter.email) }
   }
 
   async updateAccess(

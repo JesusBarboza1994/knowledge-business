@@ -79,3 +79,10 @@ export enum LinkDirection {
   IN = 'in',
   BOTH = 'both',
 }
+
+/** What a single-use emailed token authorizes. Each purpose has its own lifetime (AUTH_TOKEN_TTL_MS). */
+export enum AuthTokenPurpose {
+  VERIFY_EMAIL = 'verify_email',
+  RESET_PASSWORD = 'reset_password',
+  INVITE = 'invite',
+}

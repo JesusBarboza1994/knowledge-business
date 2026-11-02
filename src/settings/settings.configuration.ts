@@ -21,6 +21,8 @@ export default () => ({
     cookieSameSite: process.env.COOKIE_SAME_SITE ?? (process.env.NODE_ENV === 'production' ? 'none' : 'lax'),
   },
   app: {
+    // Public base URL of this API (OAuth issuer). The MCP endpoint lives at `${publicUrl}/mcp`.
+    publicUrl: (process.env.PUBLIC_URL || `http://localhost:${process.env.PORT ?? 3000}`).trim().replace(/\/$/, ''),
     // Canonical frontend URL for links in emails. FRONTEND_URLS may list several origins (CORS);
     // email links need exactly one.
     frontendUrl: (
