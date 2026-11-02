@@ -22,5 +22,8 @@
     "strictBindCallApply": false,
     "forceConsistentCasingInFileNames": false,
     "noFallthroughCasesInSwitch": false
-  }
+  },
+  // Type-check scope (tsc / IDE). The build narrows it further in tsconfig.build.json.
+  // The SNS provider is not wired into the app and its SDK is not a dependency.
+  "exclude": ["node_modules", "dist", "vitest.*.*ts", "src/providers/notification/**"]
 }

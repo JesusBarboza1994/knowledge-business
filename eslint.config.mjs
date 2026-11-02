@@ -26,6 +26,8 @@ export default [
       './data/*.json',
       '**/dist/',
       '**/coverage/',
+      // Out of the tsconfig project: the SNS provider is not wired in (see tsconfig.json).
+      'src/providers/notification/**',
     ],
   },
   ...compat.extends('plugin:@typescript-eslint/recommended', 'plugin:prettier/recommended'),
