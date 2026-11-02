@@ -32,7 +32,7 @@ describe('OrganizationsService', () => {
 
   it('expone una única URL de MCP para todas las organizaciones', () => {
     expect(build(null).service.connectInfo()).toEqual({
-      product_name: 'Knowledge Hub',
+      product_name: 'NoesisHub',
       mcp_url: 'https://api.example.com/mcp',
       auth: 'oauth',
     })

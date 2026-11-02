@@ -2,8 +2,8 @@ import type { Implementation } from '@modelcontextprotocol/sdk/types.js'
 import { getBrandLogoUrl } from '@/branding/brand'
 
 const BASE_SERVER_INFO: Implementation = {
-  name: 'knowledge-hub',
-  title: 'Knowledge Hub',
+  name: 'noesishub',
+  title: 'NoesisHub',
   version: '1.0.0',
   description: 'Memoria confiable y conocimiento conectado para organizaciones.',
 }

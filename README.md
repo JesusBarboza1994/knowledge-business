@@ -1,8 +1,8 @@
 # template-mms
 
-> Este repositorio implementa actualmente el backend de Knowledge Hub. La descripción histórica de la plantilla se conserva debajo.
+> Este repositorio implementa actualmente el backend de NoesisHub. La descripción histórica de la plantilla se conserva debajo.
 
-## API web de Knowledge Hub
+## API web de NoesisHub
 
 El frontend usa sesiones firmadas en cookie `httpOnly`. Configuración mínima:
 

@@ -36,7 +36,7 @@ export default () => ({
   mail: {
     // Empty key → emails are logged to the console instead of sent (local development).
     resendApiKey: process.env.RESEND_API_KEY ?? '',
-    from: process.env.MAIL_FROM || 'Knowledge Hub <onboarding@resend.dev>',
+    from: process.env.MAIL_FROM || 'NoesisHub <onboarding@resend.dev>',
     salesEmail: process.env.SALES_EMAIL ?? '',
   },
   aws: {

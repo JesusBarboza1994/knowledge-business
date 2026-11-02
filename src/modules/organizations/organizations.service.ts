@@ -4,7 +4,7 @@ import { AppConfig } from '@/settings/settings.model'
 import { OrganizationRepository } from '@/repository/schemas/organization/organization.repository'
 import { CreateOrganizationDto } from './dto/create-organization.dto'
 
-export const PRODUCT_NAME = 'Knowledge Hub'
+export const PRODUCT_NAME = 'NoesisHub'
 
 @Injectable()
 export class OrganizationsService {

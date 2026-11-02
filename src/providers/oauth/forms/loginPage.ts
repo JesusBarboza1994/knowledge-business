@@ -9,14 +9,14 @@ export function renderLoginForm(nonce: string, error?: string, brandLogoUrl = pr
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Knowledge Hub — Iniciar sesion</title>
+  <title>NoesisHub — Iniciar sesion</title>
   <style>${PAGE_STYLES}</style>
 </head>
 <body>
   <div class="card">
     <div class="brand">
       ${logoUrl ? `<img class="brand-icon" src="${logoUrl}" alt="" width="56" height="56" />` : ''}
-      <div class="logo">Knowledge Hub</div>
+      <div class="logo">NoesisHub</div>
     </div>
     <div class="subtitle">Inicia sesion para conectar tu cliente MCP.</div>
     ${error ? `<div class="error">${error}</div>` : ''}

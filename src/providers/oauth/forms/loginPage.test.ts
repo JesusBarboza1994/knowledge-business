@@ -12,7 +12,7 @@ describe('renderLoginForm', () => {
   it('keeps the text fallback when no logo is configured', () => {
     const html = renderLoginForm('nonce-1', undefined, '')
 
-    expect(html).toContain('<div class="logo">Knowledge Hub</div>')
+    expect(html).toContain('<div class="logo">NoesisHub</div>')
     expect(html).not.toContain('class="brand-icon"')
   })
 })
