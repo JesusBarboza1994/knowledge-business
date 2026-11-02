@@ -39,7 +39,7 @@ export function setupOAuth(app: INestApplication, issuerUrl: URL): void {
       issuerUrl,
       resourceServerUrl: new URL('/mcp', issuerUrl),
       scopesSupported: ['mcp'],
-      resourceName: 'Knowledge Hub',
+      resourceName: 'NoesisHub',
     }),
   )
 

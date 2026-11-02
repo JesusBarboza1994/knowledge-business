@@ -6,7 +6,7 @@ export function renderSuccess(redirectUrl: string): string {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Knowledge Hub — Conectado</title>
+  <title>NoesisHub — Conectado</title>
   <meta http-equiv="refresh" content="2;url=${redirectUrl}">
   <style>${PAGE_STYLES}</style>
 </head>

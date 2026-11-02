@@ -11,7 +11,7 @@ export class KbPrompt implements McpPrompt {
       {
         name: 'kb_ingest',
         description:
-          'Instructions for ingesting a document into the Knowledge Hub — decompose, integrate with existing knowledge, cross-reference, update the area index, and log the ingestion.',
+          'Instructions for ingesting a document into NoesisHub — decompose, integrate with existing knowledge, cross-reference, update the area index, and log the ingestion.',
         handler: async () => ({
           messages: [
             {
@@ -26,7 +26,7 @@ export class KbPrompt implements McpPrompt {
       },
       {
         name: 'kb_query',
-        description: 'Index-first strategy for answering a question from the compiled Knowledge Hub wiki.',
+        description: 'Index-first strategy for answering a question from the compiled NoesisHub wiki.',
         argsSchema: { question: z.string().describe('The question to answer') },
         handler: async ({ question }) => ({
           messages: [
@@ -43,7 +43,7 @@ export class KbPrompt implements McpPrompt {
       {
         name: 'kb_lint',
         description:
-          'Health check for the Knowledge Hub wiki — find unmapped notes, orphans, broken links, missing provenance, contradictions, and sensitivity leaks.',
+          'Health check for the NoesisHub wiki — find unmapped notes, orphans, broken links, missing provenance, contradictions, and sensitivity leaks.',
         handler: async () => ({
           messages: [
             {

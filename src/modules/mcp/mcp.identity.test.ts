@@ -4,8 +4,8 @@ import { createMcpServerInfo } from './mcp.identity'
 describe('createMcpServerInfo', () => {
   it('includes the configured brand icon', () => {
     expect(createMcpServerInfo('https://knowvault.example.com/knowvault-icon.png')).toMatchObject({
-      name: 'knowledge-hub',
-      title: 'Knowledge Hub',
+      name: 'noesishub',
+      title: 'NoesisHub',
       icons: [
         {
           src: 'https://knowvault.example.com/knowvault-icon.png',

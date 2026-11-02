@@ -1,5 +1,5 @@
 /**
- * Shared guide texts for the Knowledge Hub agent workflows.
+ * Shared guide texts for the NoesisHub agent workflows.
  *
  * Single source of truth consumed by:
  * - kb-guide.tool.ts  (tool-based mirrors, for clients that only surface tools)
@@ -17,7 +17,7 @@
  * [[link]] graph itself completely free — any note may link to any other.
  */
 
-export const INGEST_GUIDE = `You are ingesting a document into the Knowledge Hub. The wiki is a **compiled knowledge base** — ingesting is not just indexing, it means reading, understanding, and **integrating** the source into the existing body of knowledge.
+export const INGEST_GUIDE = `You are ingesting a document into NoesisHub. The wiki is a **compiled knowledge base** — ingesting is not just indexing, it means reading, understanding, and **integrating** the source into the existing body of knowledge.
 
 ## 0. Orient yourself first (REQUIRED before creating anything)
 - Call \`kb_home\`. It returns the areas you can access, your access level on each (\`read\` | \`write\` | \`manage\`), the slug of each area's **index** (Map of Content) and **log**, and its **main notes** — the area's main branches.
@@ -125,9 +125,9 @@ Add one entry at the **bottom** of the area's log page (never rewrite previous e
 8. **Wire it up** — link the new notes from their main note; add the index line only if you created a new main note.
 9. **Append to the log** — one INGEST entry.`
 
-export const QUERY_GUIDE = `Answer this question using the Knowledge Hub: "\${question}"
+export const QUERY_GUIDE = `Answer this question using NoesisHub: "\${question}"
 
-The Knowledge Hub is a **compiled wiki** — knowledge has already been decomposed, cross-referenced, and integrated from source documents. You are querying pre-compiled knowledge, not raw documents. Navigation is **index-first**: each area has a curated index (Map of Content) that lists its **main notes** — the area's main branches — and every other note hangs from one of them.
+NoesisHub is a **compiled wiki** — knowledge has already been decomposed, cross-referenced, and integrated from source documents. You are querying pre-compiled knowledge, not raw documents. Navigation is **index-first**: each area has a curated index (Map of Content) that lists its **main notes** — the area's main branches — and every other note hangs from one of them.
 
 ## Scope & language
 - Call \`kb_home\` if you haven't: it lists the areas you can read, the slug of each area's index, and its main notes. Answers can only draw on notes in those areas.
@@ -159,7 +159,7 @@ If your synthesis produced knowledge that is **not yet written in any single not
 - On save: link it from that main note and append a \`NOTE:\` entry to the log. The area index only changes if you opened a new main branch.
 Good answers filed back make the wiki compound over time.`
 
-export const LINT_GUIDE = `Run a structural health check on the Knowledge Hub wiki. Report issues and optionally fix them.
+export const LINT_GUIDE = `Run a structural health check on the NoesisHub wiki. Report issues and optionally fix them.
 
 ## Scope & language
 - Call \`kb_home\` first: you can only audit areas you can read, and fixes that create/update notes require \`write\` or \`manage\` access on the area.

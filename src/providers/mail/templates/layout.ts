@@ -26,7 +26,7 @@ export interface EmailLayoutInput {
   footnoteHtml?: string
 }
 
-const PRODUCT_NAME = 'Knowledge Hub'
+const PRODUCT_NAME = 'NoesisHub'
 
 /**
  * Table-based, inline-styled shell: email clients ignore <style> blocks and modern layout.

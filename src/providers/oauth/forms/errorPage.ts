@@ -8,7 +8,7 @@ export function renderError(message: string, nonce?: string): string {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Knowledge Hub — Error</title>
+  <title>NoesisHub — Error</title>
   <style>${PAGE_STYLES}</style>
 </head>
 <body>
