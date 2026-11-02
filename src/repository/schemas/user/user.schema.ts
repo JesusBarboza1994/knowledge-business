@@ -46,7 +46,28 @@ export class User {
 
   @Prop({ default: UserStatus.ACTIVE, enum: Object.values(UserStatus) })
   status: string
+
+  /**
+   * `null` = signed up but has not confirmed the email yet (login is refused).
+   * Missing (users created before self sign-up existed, or by a superadmin) counts as verified.
+   */
+  @Prop({ type: Date, required: false })
+  email_verified_at?: Date | null
+}
+
+/** Only an explicit `null` means unverified — see `email_verified_at`. */
+export function isEmailVerified(user: { email_verified_at?: Date | null }): boolean {
+  return user.email_verified_at !== null
 }
 
 export const UserSchema = SchemaFactory.createForClass(User)
 UserSchema.index({ tenant: 1, email: 1 }, { unique: true })
+
+/**
+ * One email = one organization, for now. Login resolves the tenant from the email alone, so two
+ * users sharing an email across tenants would make sign-in ambiguous. When multi-organization
+ * accounts land, this index is dropped and the identity moves to a global account collection.
+ * Existing databases must be checked for duplicates first: `pnpm db:unique-email`.
+ */
+export const GLOBAL_EMAIL_INDEX = 'users_email_global_unique'
+UserSchema.index({ email: 1 }, { unique: true, name: GLOBAL_EMAIL_INDEX })

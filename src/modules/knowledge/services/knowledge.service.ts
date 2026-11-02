@@ -1,3 +1,4 @@
+import { ErrorCode, errorBody } from '@/commons/constants/error-code.constant'
 import {
   BadRequestException,
   ConflictException,
@@ -672,8 +673,10 @@ export class KnowledgeService {
 
     this.assertWritableKind(data.kind, data.title)
 
+    // Missing and archived areas are both unusable: a membership can outlive its area.
     const areaDoc = await this.areaRepository.findByKey(user.tenant, data.area)
-    const sensitivity = data.sensitivity ?? areaDoc?.default_sensitivity ?? Sensitivity.PUBLIC_ORG
+    if (!areaDoc) throw new NotFoundException(errorBody(ErrorCode.AREA_NOT_FOUND, `Area not found: ${data.area}`))
+    const sensitivity = data.sensitivity ?? areaDoc.default_sensitivity ?? Sensitivity.PUBLIC_ORG
     const parent = await this.resolveParent(data.parent, normalizeSlug(data.title), user.tenant)
 
     return this.insertNote({ ...data, sensitivity, parent }, user)
@@ -689,7 +692,7 @@ export class KnowledgeService {
         throw new ForbiddenException(`Insufficient permissions to create notes in area "${areaKey}"`)
       }
       const area = await this.areaRepository.findByKey(user.tenant, areaKey)
-      if (!area) throw new NotFoundException(`Area not found: ${areaKey}`)
+      if (!area) throw new NotFoundException(errorBody(ErrorCode.AREA_NOT_FOUND, `Area not found: ${areaKey}`))
       areas.set(areaKey, area)
     }
 
@@ -1116,7 +1119,7 @@ export class KnowledgeService {
     if (patch.area !== undefined && patch.area !== note.area) {
       if (isSystemKind(note.kind)) throw new ForbiddenException('System notes cannot be moved between areas')
       const target = await this.areaRepository.findByKey(user.tenant, patch.area)
-      if (!target) throw new NotFoundException(`Area not found: ${patch.area}`)
+      if (!target) throw new NotFoundException(errorBody(ErrorCode.AREA_NOT_FOUND, `Area not found: ${patch.area}`))
       if (!this.permissionService.canWriteTo(user, target.key)) {
         throw new ForbiddenException(`Write access is required in target area "${target.key}" to move a note into it`)
       }

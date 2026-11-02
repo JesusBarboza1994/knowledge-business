@@ -451,7 +451,7 @@ describe('KnowledgeService main notes', () => {
       {} as never,
       assetService as never,
     )
-    return { service, noteRepository }
+    return { service, noteRepository, areaRepository }
   }
 
   it('cuelga la nota de la main declarada y guarda su slug', async () => {
@@ -487,6 +487,16 @@ describe('KnowledgeService main notes', () => {
     await expect(
       service.create({ area: 'develop', title: 'Hija', body: 'x', parent: 'No existe' }, user),
     ).rejects.toThrow(/does not exist/)
+    expect(noteRepository.create).not.toHaveBeenCalled()
+  })
+
+  it('rechaza crear en un área inexistente o archivada aunque la membresía siga vigente', async () => {
+    const { service, noteRepository, areaRepository } = buildForCreate()
+    areaRepository.findByKey.mockResolvedValue(null)
+
+    await expect(service.create({ area: 'develop', title: 'Huérfana', body: 'x' }, user)).rejects.toMatchObject({
+      response: { code: 'AREA_NOT_FOUND' },
+    })
     expect(noteRepository.create).not.toHaveBeenCalled()
   })
 
