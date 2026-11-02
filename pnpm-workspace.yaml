@@ -1,0 +1,20 @@
+# Dependencies allowed to run install scripts. pnpm 11 (what Railway installs) fails the
+# install when a dependency's build script is neither allowed nor denied.
+# pnpm 11 reads `allowBuilds`; pnpm 10 reads the two lists below. Keep both in sync.
+allowBuilds:
+  '@swc/core': true
+  esbuild: true
+  msgpackr-extract: true
+  '@nestjs/core': false
+  '@scarf/scarf': false
+  nestjs-pino: false
+
+onlyBuiltDependencies:
+  - '@swc/core'
+  - esbuild
+  - msgpackr-extract
+
+ignoredBuiltDependencies:
+  - '@nestjs/core'
+  - '@scarf/scarf'
+  - nestjs-pino

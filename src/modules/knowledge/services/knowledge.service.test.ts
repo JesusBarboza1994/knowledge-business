@@ -345,6 +345,7 @@ describe('KnowledgeService move', () => {
       {} as never,
       {} as never,
       {} as never,
+      {} as never,
     )
     return { service, source, noteRepository, noteVersionRepository, permissionService }
   }
