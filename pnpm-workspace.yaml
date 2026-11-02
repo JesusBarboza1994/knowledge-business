@@ -1,5 +1,7 @@
-# Dependencies allowed to run install scripts. pnpm 11 (what Railway installs) fails the
-# install when a dependency's build script is neither allowed nor denied.
+# Dependencies allowed to run install scripts. pnpm 11 fails the install when a
+# dependency's build script is neither allowed nor denied; pnpm 10 only warns.
+# package.json also pins pnpm 10 (`packageManager`): the Railway build ignored this file
+# under pnpm 11, so it only acts as the approval list for pnpm 10.
 # pnpm 11 reads `allowBuilds`; pnpm 10 reads the two lists below. Keep both in sync.
 allowBuilds:
   '@swc/core': true
