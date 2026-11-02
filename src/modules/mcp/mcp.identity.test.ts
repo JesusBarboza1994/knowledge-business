@@ -5,7 +5,7 @@ describe('createMcpServerInfo', () => {
   it('includes the configured brand icon', () => {
     expect(createMcpServerInfo('https://knowvault.example.com/knowvault-icon.png')).toMatchObject({
       name: 'knowledge-hub',
-      title: 'KnowHub',
+      title: 'Knowledge Hub',
       icons: [
         {
           src: 'https://knowvault.example.com/knowvault-icon.png',

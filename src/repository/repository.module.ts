@@ -12,6 +12,8 @@ import { NoteVersion, NoteVersionSchema } from './schemas/note-version/note-vers
 import { NoteVersionRepository } from './schemas/note-version/note-version.repository'
 import { Asset, AssetSchema } from './schemas/asset/asset.schema'
 import { AssetRepository } from './schemas/asset/asset.repository'
+import { AuthToken, AuthTokenSchema } from './schemas/auth-token/auth-token.schema'
+import { AuthTokenRepository } from './schemas/auth-token/auth-token.repository'
 
 @Module({
   imports: [
@@ -22,6 +24,7 @@ import { AssetRepository } from './schemas/asset/asset.repository'
       { name: Note.name, schema: NoteSchema },
       { name: NoteVersion.name, schema: NoteVersionSchema },
       { name: Asset.name, schema: AssetSchema },
+      { name: AuthToken.name, schema: AuthTokenSchema },
     ]),
   ],
   providers: [
@@ -31,6 +34,7 @@ import { AssetRepository } from './schemas/asset/asset.repository'
     NoteRepository,
     NoteVersionRepository,
     AssetRepository,
+    AuthTokenRepository,
   ],
   exports: [
     OrganizationRepository,
@@ -39,6 +43,7 @@ import { AssetRepository } from './schemas/asset/asset.repository'
     NoteRepository,
     NoteVersionRepository,
     AssetRepository,
+    AuthTokenRepository,
   ],
 })
 export class RepositoryModule {}

@@ -29,6 +29,11 @@ export class UserRepository {
     return this.model.findOne({ email: email.toLowerCase(), status: UserStatus.ACTIVE }).exec()
   }
 
+  /** Any status, any tenant — the global-uniqueness check for an email. */
+  async existsByEmail(email: string): Promise<boolean> {
+    return (await this.model.exists({ email: email.toLowerCase() })) !== null
+  }
+
   async findAllByTenant(tenant: string): Promise<UserDocument[]> {
     return this.model.find({ tenant, status: { $in: [UserStatus.ACTIVE, UserStatus.INVITED] } }).exec()
   }
@@ -48,6 +53,15 @@ export class UserRepository {
   /** Returns user including password_hash — only for authentication */
   async findByEmailWithPassword(email: string): Promise<UserDocument | null> {
     return this.model.findOne({ email: email.toLowerCase(), status: UserStatus.ACTIVE }).select('+password_hash').exec()
+  }
+
+  async findByIdGlobal(id: string): Promise<UserDocument | null> {
+    if (!Types.ObjectId.isValid(id)) return null
+    return this.model.findById(id).exec()
+  }
+
+  async updateByIdGlobal(id: string, data: Partial<User>): Promise<UserDocument | null> {
+    return this.model.findByIdAndUpdate(id, { $set: data }, { new: true }).exec()
   }
 
   async setPasswordHash(tenant: string, email: string, password_hash: string): Promise<void> {

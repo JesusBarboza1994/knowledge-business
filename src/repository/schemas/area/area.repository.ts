@@ -19,11 +19,18 @@ export class AreaRepository {
     return this.model.findOne({ tenant, key, status: ContentStatus.ACTIVE }).exec()
   }
 
+  /** Any status — the key stays reserved after archiving, as the {tenant, key} index enforces. */
+  async existsByKey(tenant: string, key: string): Promise<boolean> {
+    return (await this.model.exists({ tenant, key })) !== null
+  }
+
   async findAllByTenant(tenant: string): Promise<AreaDocument[]> {
     return this.model.find({ tenant, status: ContentStatus.ACTIVE }).exec()
   }
 
   async update(tenant: string, key: string, data: Partial<Area>): Promise<AreaDocument | null> {
-    return this.model.findOneAndUpdate({ tenant, key }, { $set: data }, { new: true }).exec()
+    return this.model
+      .findOneAndUpdate({ tenant, key, status: ContentStatus.ACTIVE }, { $set: data }, { new: true })
+      .exec()
   }
 }

@@ -1,15 +1,27 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common'
 import { AreaRepository } from '@/repository/schemas/area/area.repository'
 import { CreateAreaDto } from './dto/create-area.dto'
+import { ErrorCode, errorBody, isDuplicateKeyError } from '@/commons/constants/error-code.constant'
 
 @Injectable()
 export class AreasService {
   constructor(private readonly areaRepository: AreaRepository) {}
 
   async create(dto: CreateAreaDto) {
-    const existing = await this.areaRepository.findByKey(dto.tenant, dto.key)
-    if (existing) throw new ConflictException(`Area "${dto.key}" already exists in tenant "${dto.tenant}"`)
-    return this.areaRepository.create(dto)
+    if (await this.areaRepository.existsByKey(dto.tenant, dto.key)) throw this.keyTaken(dto.key)
+    try {
+      return await this.areaRepository.create(dto)
+    } catch (error) {
+      if (isDuplicateKeyError(error)) throw this.keyTaken(dto.key)
+      throw error
+    }
+  }
+
+  /** Archived areas keep their key reserved, so the message must not imply the key is free. */
+  private keyTaken(key: string) {
+    return new ConflictException(
+      errorBody(ErrorCode.AREA_KEY_TAKEN, `Area key "${key}" is already in use (possibly by an archived area)`),
+    )
   }
 
   async findAll(tenant: string) {

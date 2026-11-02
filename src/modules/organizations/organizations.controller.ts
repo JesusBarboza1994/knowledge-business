@@ -1,8 +1,8 @@
-import { Body, Controller, ForbiddenException, Get, Param, Patch, Post } from '@nestjs/common'
+import { Body, Controller, ForbiddenException, Get, HttpCode, Param, Patch, Post } from '@nestjs/common'
 import { OrganizationsService } from './organizations.service'
 import { CreateOrganizationDto } from './dto/create-organization.dto'
 import { CurrentUser } from '@/commons/decorators/current-user.decorator'
-import { UserProfile } from '@/tools/user-profile.type'
+import { UserProfile, isTenantAdmin } from '@/tools/user-profile.type'
 import { UserRole } from '@/commons/enums'
 
 @Controller('organizations')
@@ -24,6 +24,19 @@ export class OrganizationsController {
   @Get('current')
   findCurrent(@CurrentUser() user: UserProfile) {
     return this.organizationsService.findBySlug(user.tenant)
+  }
+
+  /** Any member can read it: the "Conectar con Claude" page is for everyone, not only admins. */
+  @Get('current/connect')
+  connect() {
+    return this.organizationsService.connectInfo()
+  }
+
+  @Post('current/onboarding/complete')
+  @HttpCode(200)
+  completeOnboarding(@CurrentUser() user: UserProfile) {
+    if (!isTenantAdmin(user)) throw new ForbiddenException('Tenant admin role required')
+    return this.organizationsService.completeOnboarding(user.tenant)
   }
 
   @Get(':id')

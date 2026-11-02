@@ -29,7 +29,13 @@ export class UsersController {
     if (dto.role === UserRole.SUPERADMIN && user.role !== UserRole.SUPERADMIN) {
       throw new ForbiddenException('Only a superadmin can grant the superadmin role')
     }
-    return this.usersService.invite(user.tenant, dto, user.email)
+    return this.usersService.invite(user.tenant, dto, { email: user.email, name: user.name })
+  }
+
+  @Post(':id/invitation')
+  resendInvitation(@Param('id') id: string, @CurrentUser() user: UserProfile) {
+    this.assertTenantAdmin(user)
+    return this.usersService.resendInvitation(user.tenant, id, { email: user.email, name: user.name })
   }
 
   @Patch(':id')
